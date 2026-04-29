@@ -672,16 +672,38 @@ function RatioChart({
   )
 }
 
-// ============ SWAP WIDGET ============
+// ============ SWAP BUTTON ============
 function UniswapWidget({ ggxAddress }: { ggxAddress: string }) {
   return (
-    <iframe
-      src={`https://widget.li.fi/swap?fromChain=bas&toChain=bas&toToken=${ggxAddress}&theme=dark`}
-      height="360"
-      width="100%"
-      style={{ border: 'none', borderRadius: '12px' }}
-      allow="clipboard-write"
-    />
+    <div className="rounded-xl border border-white/10 bg-[#141416]/80 p-4 flex flex-col gap-3">
+      <p className="text-xs text-gray-400 text-center">Swap ERAGE on Uniswap (Base)</p>
+      <div className="grid grid-cols-2 gap-2">
+        <a
+          href={`https://app.uniswap.org/swap?inputCurrency=ETH&outputCurrency=${ggxAddress}&chain=base`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center justify-center gap-1.5 py-2.5 rounded-lg bg-[#FF6B35] hover:bg-[#FF8A5C] text-white text-xs font-semibold transition-all"
+        >
+          <ArrowUpRight size={12} /> Buy ERAGE
+        </a>
+        <a
+          href={`https://app.uniswap.org/swap?inputCurrency=${ggxAddress}&outputCurrency=ETH&chain=base`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center justify-center gap-1.5 py-2.5 rounded-lg bg-[#3B82F6] hover:bg-[#5B9CF6] text-white text-xs font-semibold transition-all"
+        >
+          <ArrowUpRight size={12} /> Sell ERAGE
+        </a>
+      </div>
+      <a
+        href={`https://app.uniswap.org/explore/pools/base/${ggxAddress}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-center text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
+      >
+        View liquidity pool →
+      </a>
+    </div>
   )
 }
 
