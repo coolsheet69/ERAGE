@@ -7,9 +7,23 @@ const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
   title: 'ERAGE Protocol',
-  description: 'Dual-backed ratchet token on Base. GGX — 1:1 backing, NO inflation EVER.',
+  description: 'Dual-backed ratchet token on Base. — Only UP!!  NO inflation EVER!!',
   icons: {
-    icon: '/ERAGE-logo.webp',
+    icon: [
+      { url: '/favicon.png', type: 'image/png' },
+      { url: '/ERAGE-logo.webp', type: 'image/webp' },
+    ],
+  },
+  openGraph: {
+    title: 'ERAGE Protocol',
+    description: 'Dual-backed ratchet token on Base. — Only UP!!  NO inflation EVER!!',
+    images: ['/ERAGE-logo.webp'],
+  },
+  twitter: {
+    card: 'summary',
+    title: 'ERAGE Protocol',
+    description: 'Dual-backed ratchet token on Base. — Only UP!!  NO inflation EVER!!',
+    images: ['/ERAGE-logo.webp'],
   },
 }
 
