@@ -1758,7 +1758,7 @@ export default function Dashboard() {
           ) : (
             <div className="space-y-3">
               {/* Main Grid */}
-              <div className="grid grid-cols-12 gap-3 overflow-x-hidden" style={{ height: 'calc(100vh - 140px)' }}>
+              <div className="grid grid-cols-12 gap-3 overflow-x-hidden" style={{ height: 'calc(100vh - 80px)' }}>
                 {/* Left Column */}
                 <div className="col-span-12 lg:col-span-5 flex flex-col gap-3">
                   {/* Top Row - 3 columns on desktop, 1 col on mobile */}
@@ -2371,7 +2371,7 @@ export default function Dashboard() {
                     <div className="border-t border-white/10 my-1.5" />
 
                     {/* Widget + Logo side by side */}
-                    <div className="mt-auto space-y-2">
+                    <div className="space-y-2">
                       {/* Bootstrapping warning */}
                       <div className="flex items-start gap-1.5 animate-pulse text-[11px]" style={{ animationDuration: '3s', animationTimingFunction: 'ease-in-out' }}>
                         <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#EF4444] mt-1 shrink-0"></span>
