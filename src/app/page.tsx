@@ -675,7 +675,7 @@ function RatioChart({
 // ============ SWAP WIDGET ============
 function UniswapWidget({ ggxAddress }: { ggxAddress: string }) {
   return (
-    <div style={{ width: '100%', height: '100%', minHeight: '280px', overflow: 'hidden', borderRadius: '12px', position: 'relative' }}>
+    <div style={{ width: '100%', height: '100%', minHeight: '320px', overflow: 'hidden', borderRadius: '12px', position: 'relative' }}>
       <iframe
         src={`https://switch.win/widget?network=base&background_color=0a0a0b&font_color=ffffff&secondary_font_color=6b7280&border_color=FF6B35&backdrop_color=transparent&from=0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee&to=${ggxAddress}`}
         allow="clipboard-read; clipboard-write"
@@ -1444,13 +1444,14 @@ export default function Dashboard() {
 
     // V5 ZapContract: 0.69% ETH tax deducted before swapping
     const ZAP_TAX = 1 - 69 / 10_000  // 0.9931
-    // Zap swap/routing efficiency (~1% slippage across both hops)
-    const ZAP_EFFICIENCY = 0.99
+    // Zap swap/routing efficiency — two-hop WETH→USDC→RAGE + single-hop WETH→ESHARE
+    // accounts for pool price impact and routing losses (~7% combined)
+    const ZAP_SLIPPAGE = 0.93
     // GGX contract: 2.5% mint tax
     const MINT_TAX = 0.975
 
-    // Combined multiplier: tax → swap → mint
-    const totalEfficiency = ZAP_TAX * ZAP_EFFICIENCY * MINT_TAX
+    // Combined multiplier: tax → swap slippage → mint
+    const totalEfficiency = ZAP_TAX * ZAP_SLIPPAGE * MINT_TAX
 
     // If ratio > 1, minting gives fewer GGX per pair (each worth more)
     if (priceEfficiencyRatio && priceEfficiencyRatio > 1) {
@@ -1949,7 +1950,7 @@ export default function Dashboard() {
 
                 {/* Right Column - Unified Action Box */}
                 <div className="col-span-12 lg:col-span-7 flex flex-col gap-3">
-                  <div className="flex-1 card rounded-xl p-2 sm:p-3 overflow-auto flex flex-col">
+                  <div className="flex-1 card rounded-xl p-2 sm:p-3 lg:overflow-auto flex flex-col">
                     <div className="space-y-2">
                       {/* Token Selector Buttons with Mint/Redeem labels */}
                       <div className="flex gap-2">
