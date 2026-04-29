@@ -675,13 +675,20 @@ function RatioChart({
 // ============ SWAP WIDGET ============
 function UniswapWidget({ ggxAddress }: { ggxAddress: string }) {
   return (
-    <iframe
-      src={`https://switch.win/widget?network=base&background_color=0a0a0b&font_color=ffffff&secondary_font_color=6b7280&border_color=FF6B35&backdrop_color=transparent&from=0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee&to=${ggxAddress}`}
-      allow="clipboard-read; clipboard-write"
-      width="100%"
-      height="420px"
-      style={{ border: 'none', borderRadius: '12px' }}
-    />
+    <div style={{ width: '100%', height: '280px', overflow: 'hidden', borderRadius: '12px', position: 'relative' }}>
+      <iframe
+        src={`https://switch.win/widget?network=base&background_color=0a0a0b&font_color=ffffff&secondary_font_color=6b7280&border_color=FF6B35&backdrop_color=transparent&from=0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee&to=${ggxAddress}`}
+        allow="clipboard-read; clipboard-write"
+        style={{
+          border: 'none',
+          width: '150%',
+          height: '150%',
+          transform: 'scale(0.667)',
+          transformOrigin: 'top left',
+          borderRadius: '12px',
+        }}
+      />
+    </div>
   )
 }
 
