@@ -1743,17 +1743,12 @@ export default function Dashboard() {
         <main className="flex-1 max-w-7xl mx-auto w-full px-2 sm:px-4 py-2 sm:py-3">
           {!isConnected ? (
             <div className="flex flex-col items-center justify-center h-[calc(100vh-200px)] animate-fade-in-up">
-              <img src="/ERAGE-logo.webp" className="w-24 h-24 rounded-3xl object-cover shadow-2xl shadow-[#FF6B35]/30 animate-pulse-glow" alt="GGX" />
+              <img src="/ERAGE-logo.webp" className="w-48 h-48 rounded-3xl object-cover shadow-2xl shadow-[#FF6B35]/30 animate-pulse-glow" alt="ERAGE" />
               <h2 className="text-3xl font-bold mt-6 mb-2"><span className="gradient-text-animated">ERAGE Protocol</span></h2>
               <p className="text-gray-400 text-lg mb-6">Dual-backed ratchet token</p>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 text-center">
-                {[{ label: '1:1 Backed', desc: 'ESHARE + RAGE' }, { label: '2.5% Tax', desc: 'Floor only goes up' }, { label: 'One Click Mint', desc: 'One-click Redeem' }].map(({ label, desc }) => (
-                  <div key={label} className="p-3 rounded-xl bg-white/5 border border-white/5">
-                    <p className="font-semibold text-sm">{label}</p>
-                    <p className="text-xs text-gray-500">{desc}</p>
-                  </div>
-                ))}
-              </div>
+              <button onClick={() => connect({ connector: connectors[0] })} disabled={isConnecting} className="px-8 py-3 text-base btn-primary rounded-xl font-semibold disabled:opacity-50 flex items-center gap-2">
+                <Wallet size={20} /> Connect Wallet
+              </button>
             </div>
           ) : (
             <div className="space-y-3">
@@ -2382,7 +2377,7 @@ export default function Dashboard() {
                           <UniswapWidget ggxAddress={CONTRACTS.GGX} />
                         </div>
                         <div className="shrink-0 flex items-center justify-center">
-                          <img src="/ERAGE-logo.webp" className="w-20 h-20 sm:w-28 sm:h-28 lg:w-48 lg:h-48 object-contain opacity-60" alt="ERAGE" />
+                          <img src="/ERAGE-logo.webp" className="w-20 h-20 sm:w-28 sm:h-28 lg:w-52 lg:h-52 object-contain opacity-60" alt="ERAGE" />
                         </div>
                       </div>
                       {/* Links row — mt-auto sticks to card bottom */}
