@@ -674,38 +674,12 @@ function RatioChart({
 
 // ============ UNISWAP WIDGET ============
 function UniswapWidget({ ggxAddress }: { ggxAddress: string }) {
-  const [SwapWidget, setSwapWidget] = useState<React.ComponentType<any> | null>(null)
-
-  useEffect(() => {
-    import('@uniswap/widgets').then((mod) => {
-      setSwapWidget(() => mod.SwapWidget)
-    })
-  }, [])
-
-  if (!SwapWidget) return (
-    <div className="h-[360px] flex items-center justify-center text-gray-500 text-xs">
-      Loading swap widget...
-    </div>
-  )
-
   return (
-    <SwapWidget
-      tokenList={[]}
-      defaultOutputTokenAddress={ggxAddress}
-      defaultInputTokenAddress="NATIVE"
-      theme={{
-        primary: '#FF6B35',
-        secondary: '#6B7280',
-        interactive: '#1a1a1c',
-        container: '#0F0F10',
-        module: '#141416',
-        accent: '#FF6B35',
-        outline: '#ffffff1a',
-        dialog: '#0F0F10',
-        fontFamily: 'inherit',
-        borderRadius: { large: 12, medium: 8, small: 4, xsmall: 2 },
-      }}
+    <iframe
+      src={`https://app.uniswap.org/swap?outputCurrency=${ggxAddress}&chain=base&theme=dark`}
+      height="360"
       width="100%"
+      style={{ border: 'none', borderRadius: '12px' }}
     />
   )
 }
