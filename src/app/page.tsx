@@ -2378,11 +2378,11 @@ export default function Dashboard() {
                     {/* Widget + Logo side by side — flex-1 fills remaining card height, pushes links to bottom */}
                     <div className="flex-1 flex flex-col justify-between gap-2">
                       <div className="flex-1 flex gap-3 items-stretch">
-                        <div className="flex-1" style={{ maxWidth: 'calc(100% - 110px)' }}>
+                        <div className="flex-1" style={{ maxWidth: 'calc(100% - 80px)' }}>
                           <UniswapWidget ggxAddress={CONTRACTS.GGX} />
                         </div>
                         <div className="shrink-0 flex items-center justify-center">
-                          <img src="/ERAGE-logo.webp" className="w-36 h-36 object-contain opacity-60" alt="ERAGE" />
+                          <img src="/ERAGE-logo.webp" className="w-20 h-20 sm:w-28 sm:h-28 lg:w-48 lg:h-48 object-contain opacity-60" alt="ERAGE" />
                         </div>
                       </div>
                       {/* Links row — mt-auto sticks to card bottom */}
