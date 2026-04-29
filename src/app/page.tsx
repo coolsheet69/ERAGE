@@ -734,11 +734,11 @@ export default function Dashboard() {
 
   // Slippage tolerance for mint/zap — v5.1 auto-slippage
   // Computed per-trade based on trade size vs pool liquidity. Hard capped at 15%.
-  // Users can override via the "Adjust" input. Auto uses MAX(8%, 8% + pool_consumption_pct).
+  // Users can override via the "Adjust" input. Auto uses MAX(11%, 11% + pool_consumption_pct).
   const SLIPPAGE_MAX_PCT = 15
-  const SLIPPAGE_MIN_PCT = 8
+  const SLIPPAGE_MIN_PCT = 11
   const [slippageMode, setSlippageMode] = useState<'auto' | 'manual'>('auto')
-  const [slippageManual, setSlippageManual] = useState('8')
+  const [slippageManual, setSlippageManual] = useState('11')
 
   const [showAdmin, setShowAdmin] = useState(false)
   const [adminTab, setAdminTab] = useState<'ggx' | 'zap' | 'rescue'>('ggx')
@@ -1462,15 +1462,15 @@ export default function Dashboard() {
   }, [inputAmount, prices.ggxPrice, priceEfficiencyRatio])
 
   // ============ Auto-Slippage (v5.1) ============
-  // Baseline 8% covers the estimator's systematic under-estimate on the ETH zap
+  // Baseline 11% covers the estimator's systematic under-estimate on the ETH zap
   // path (two-hop WETH→USDC→RAGE + single-hop WETH→ESHARE; each leg eats price
   // impact and the frontend estimator doesn't model that precisely).
-  // We scale UP from 8% as the trade size grows relative to the tighter of the
+  // We scale UP from 11% as the trade size grows relative to the tighter of the
   // two binding liquidity pools (ESHARE/WETH on the ESHARE leg, USDC side of
   // the RAGE/USDC pool on the RAGE leg). Capped at 15%.
   //
   // For the direct ESHARE+RAGE mint path there are no Uniswap swaps, so the
-  // on-chain getMintOutput preview is exact and 8% is generous overhead.
+  // on-chain getMintOutput preview is exact and 11% is generous overhead.
   const autoSlippagePct = useMemo<number>(() => {
     // For non-zap paths (direct mint), the estimator is on-chain exact; keep the floor.
     if (inputToken !== 'ETH') return SLIPPAGE_MIN_PCT
@@ -1502,7 +1502,7 @@ export default function Dashboard() {
     // Use the larger of the two leg percentages — whichever leg is the binding constraint.
     const bindingLegPct = Math.max(eshareLegPct, rageLegPct)
 
-    // Base 8% + 1% additional tolerance for each 1% of pool consumed.
+    // Base 11% + 1% additional tolerance for each 1% of pool consumed.
     const auto = SLIPPAGE_MIN_PCT + bindingLegPct
     return Math.min(Math.max(auto, SLIPPAGE_MIN_PCT), SLIPPAGE_MAX_PCT)
   }, [inputToken, inputAmount, eshareLpWethBal, rageLpUsdcBal, prices.ethPriceUsd])
@@ -1956,65 +1956,47 @@ export default function Dashboard() {
                 <div className="col-span-12 lg:col-span-7 flex flex-col gap-3">
                   <div className="flex-1 card rounded-xl p-2 sm:p-3 overflow-auto flex flex-col">
                     <div className="space-y-2">
-                      {/* Header */}
-                      <div className="flex items-center justify-between">
-                        <h3 className="text-sm font-semibold">Mint / Redeem</h3>
-                        {/* Action Recommendation */}
-                        {priceEfficiencyRatio !== null ? (
-                          inputToken === 'GGX' ? (
-                            // EXIT mode recommendations
-                            <span className={"text-[10px] px-2 py-1 rounded-full font-semibold " + (priceEfficiencyRatio >= 1.025 ? "bg-[#F97316]/20 text-[#F97316] border border-[#F97316]/30" : "bg-[#A855F7]/20 text-[#A855F7] border border-[#A855F7]/30")}>
-                              {priceEfficiencyRatio >= 1.025 ? "SELL UNI" : "REDEEM"}
-                            </span>
-                          ) : (
-                            // ACQUIRE mode recommendations
-                            <span className={
-                              priceEfficiencyRatio >= 1.025
-                                ? "text-[10px] px-2 py-1 rounded-full font-semibold bg-[#06B6D4]/20 text-[#06B6D4] border border-[#06B6D4]/30"
-                                : "text-[10px] px-2 py-1 rounded-full font-semibold bg-[#10B981]/20 text-[#10B981] border border-[#10B981]/30"
-                            }>
-                              {priceEfficiencyRatio >= 1.025 ? "MINT" : "BUY UNI recommended"}
-                            </span>
-                          )
-                        ) : (
-                          <span className={"text-[10px] px-2 py-0.5 rounded-full " + (inputToken === "GGX" ? "bg-[#A855F7]/20 text-[#A855F7]" : "bg-[#10B981]/20 text-[#10B981]")}>
-                            {inputToken === "GGX" ? "Redeem" : "Mint"}
-                          </span>
-                        )}
-                      </div>
-                      
-                      {/* Token Selector Buttons */}
+                      {/* Token Selector Buttons with Mint/Redeem labels */}
                       <div className="flex gap-2">
-                        <button 
-                          onClick={() => { setInputToken('ETH'); setInputAmount(''); setEshareInput(''); setRageInput(''); }}
-                          className={`flex-1 py-2 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1 ${
-                            inputToken === 'ETH' 
-                              ? 'bg-[#FF6B35] text-white' 
-                              : 'bg-white/5 text-gray-400 hover:text-white border border-white/10'
-                          }`}
-                        >
-                          <Zap size={12} /> ETH
-                        </button>
-                        <button 
-                          onClick={() => { setInputToken('ESHARE_RAGE'); setInputAmount(''); setEshareInput(''); setRageInput(''); }}
-                          className={`flex-1 py-2 rounded-lg text-xs font-medium transition-all ${
-                            inputToken === 'ESHARE_RAGE' 
-                              ? 'bg-[#8B5CF6] text-white' 
-                              : 'bg-white/5 text-gray-400 hover:text-white border border-white/10'
-                          }`}
-                        >
-                          ESHARE + RAGE
-                        </button>
-                        <button 
-                          onClick={() => { setInputToken('GGX'); setInputAmount(''); setEshareInput(''); setRageInput(''); }}
-                          className={`flex-1 py-2 rounded-lg text-xs font-medium transition-all ${
-                            inputToken === 'GGX' 
-                              ? 'bg-[#3B82F6] text-white' 
-                              : 'bg-white/5 text-gray-400 hover:text-white border border-white/10'
-                          }`}
-                        >
-                          Redeem ERAGE
-                        </button>
+                        <div className="flex-1 flex flex-col items-center gap-0.5">
+                          <p className="text-[9px] text-[#10B981] font-semibold">Mint</p>
+                          <button 
+                            onClick={() => { setInputToken('ETH'); setInputAmount(''); setEshareInput(''); setRageInput(''); }}
+                            className={`w-full py-2 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1 ${
+                              inputToken === 'ETH' 
+                                ? 'bg-[#FF6B35] text-white' 
+                                : 'bg-white/5 text-gray-400 hover:text-white border border-white/10'
+                            }`}
+                          >
+                            <Zap size={12} /> ETH
+                          </button>
+                        </div>
+                        <div className="flex-1 flex flex-col items-center gap-0.5">
+                          <p className="text-[9px] text-[#10B981] font-semibold">Mint</p>
+                          <button 
+                            onClick={() => { setInputToken('ESHARE_RAGE'); setInputAmount(''); setEshareInput(''); setRageInput(''); }}
+                            className={`w-full py-2 rounded-lg text-xs font-medium transition-all ${
+                              inputToken === 'ESHARE_RAGE' 
+                                ? 'bg-[#8B5CF6] text-white' 
+                                : 'bg-white/5 text-gray-400 hover:text-white border border-white/10'
+                            }`}
+                          >
+                            ESHARE + RAGE
+                          </button>
+                        </div>
+                        <div className="flex-1 flex flex-col items-center gap-0.5">
+                          <p className="text-[9px] text-[#A855F7] font-semibold">Redeem</p>
+                          <button 
+                            onClick={() => { setInputToken('GGX'); setInputAmount(''); setEshareInput(''); setRageInput(''); }}
+                            className={`w-full py-2 rounded-lg text-xs font-medium transition-all ${
+                              inputToken === 'GGX' 
+                                ? 'bg-[#3B82F6] text-white' 
+                                : 'bg-white/5 text-gray-400 hover:text-white border border-white/10'
+                            }`}
+                          >
+                            ERAGE
+                          </button>
+                        </div>
                       </div>
 
                       {/* Separator line under tabs */}
@@ -2180,91 +2162,106 @@ export default function Dashboard() {
                       </div>
 
                       {/* Output Preview - fixed min-height prevents layout shift on tab switch */}
-                      <div className="mt-2 min-h-[56px]">
+                      <div className="mt-1 min-h-[28px]">
                       {inputToken === 'GGX' ? (
                         // Redeem output
                         redeemOutput ? (
-                          <div className="bg-[#141416]/80 rounded-lg p-2 space-y-1.5">
-                            <p className="text-xs text-gray-400">You Receive</p>
-                            <div className="grid grid-cols-2 gap-2">
-                              <div className="bg-[#8B5CF6]/10 rounded-lg p-1.5 border border-[#8B5CF6]/20">
+                          <div className="bg-[#141416]/80 rounded-lg px-2 py-0.5 space-y-0.5">
+                            <p className="text-[10px] text-gray-400">You Receive</p>
+                            <div className="grid grid-cols-2 gap-1.5">
+                              <div className="bg-[#8B5CF6]/10 rounded-md py-0.5 px-1.5 border border-[#8B5CF6]/20">
                                 <div className="flex items-center justify-between">
-                                  <p className="text-[10px] text-gray-400">ESHARE</p>
+                                  <p className="text-[9px] text-gray-400">ESHARE</p>
                                   {prices.esharePrice > 0 && prices.ethPriceUsd > 0 && (
-                                    <p className="text-[11px] text-[#10B981]">${(parseFloat(formatUnits(redeemOutput[0], 18)) * prices.esharePrice * prices.ethPriceUsd).toFixed(2)}</p>
+                                    <p className="text-[10px] text-[#10B981]">${(parseFloat(formatUnits(redeemOutput[0], 18)) * prices.esharePrice * prices.ethPriceUsd).toFixed(2)}</p>
                                   )}
                                 </div>
-                                <p className="text-sm font-semibold text-[#8B5CF6]">{formatNum(redeemOutput[0])}</p>
+                                <p className="text-xs font-semibold text-[#8B5CF6] leading-tight">{formatNum(redeemOutput[0])}</p>
                               </div>
-                              <div className="bg-[#EF4444]/10 rounded-lg p-1.5 border border-[#EF4444]/20">
+                              <div className="bg-[#EF4444]/10 rounded-md py-0.5 px-1.5 border border-[#EF4444]/20">
                                 <div className="flex items-center justify-between">
-                                  <p className="text-[10px] text-gray-400">RAGE</p>
+                                  <p className="text-[9px] text-gray-400">RAGE</p>
                                   {prices.ragePrice > 0 && (
-                                    <p className="text-[11px] text-[#10B981]">${(parseFloat(formatUnits(redeemOutput[1], 18)) * prices.ragePrice).toFixed(2)}</p>
+                                    <p className="text-[10px] text-[#10B981]">${(parseFloat(formatUnits(redeemOutput[1], 18)) * prices.ragePrice).toFixed(2)}</p>
                                   )}
                                 </div>
-                                <p className="text-sm font-semibold text-[#EF4444]">{formatNum(redeemOutput[1])}</p>
+                                <p className="text-xs font-semibold text-[#EF4444] leading-tight">{formatNum(redeemOutput[1])}</p>
                               </div>
                             </div>
                             {prices.esharePrice > 0 && prices.ethPriceUsd > 0 && prices.ragePrice > 0 && (
-                              <p className="text-[10px] text-gray-400 text-right">
+                              <p className="text-[9px] text-gray-400 text-right">
                                 Total: ${(parseFloat(formatUnits(redeemOutput[0], 18)) * prices.esharePrice * prices.ethPriceUsd + parseFloat(formatUnits(redeemOutput[1], 18)) * prices.ragePrice).toFixed(2)}
                               </p>
                             )}
                           </div>
                         ) : (
-                          <div className="bg-[#141416]/80 rounded-lg px-3 py-2">
-                            <p className="text-xs text-gray-400">You Receive</p>
-                            {isFetchingRedeemOutput && inputAmount && parseFloat(inputAmount) > 0 ? (
-                              <div className="flex items-center gap-2 mt-1">
-                                <div className="w-3 h-3 border border-[#10B981] border-t-transparent rounded-full animate-spin" />
-                                <p className="text-sm text-gray-500">Calculating...</p>
-                              </div>
-                            ) : (
-                              <p className="text-sm font-semibold text-[#10B981]">—</p>
-                            )}
+                          <div className="bg-[#141416]/80 rounded-lg px-2 py-0.5">
+                            <div className="flex items-center justify-between">
+                              <p className="text-[10px] text-gray-400">You Receive</p>
+                              {isFetchingRedeemOutput && inputAmount && parseFloat(inputAmount) > 0 ? (
+                                <div className="flex items-center gap-1">
+                                  <div className="w-2.5 h-2.5 border border-[#10B981] border-t-transparent rounded-full animate-spin" />
+                                  <p className="text-[10px] text-gray-500">Calculating...</p>
+                                </div>
+                              ) : (
+                                <p className="text-xs font-semibold text-[#10B981]">—</p>
+                              )}
+                            </div>
                           </div>
                         )
                       ) : (
                         // Mint output
-                        <div className="bg-[#141416]/80 rounded-lg px-3 py-2">
-                          <p className="text-xs text-gray-400">You Receive (est.)</p>
+                        <div className="bg-[#141416]/80 rounded-lg px-2 py-0.5">
                           {inputToken === 'ESHARE_RAGE' && mintOutputEshare && (
                             <div className="flex items-center justify-between">
-                              <p className="text-sm font-semibold text-[#10B981]">~ {formatNum(mintOutputEshare[0])} ERAGE</p>
+                              <div className="flex items-center gap-1.5">
+                                <p className="text-[10px] text-gray-400">You Receive (est.)</p>
+                                <p className="text-xs font-semibold text-[#10B981]">~ {formatNum(mintOutputEshare[0])} ERAGE</p>
+                              </div>
                               {prices.ggxPriceUsd > 0 && (
-                                <p className="text-[11px] text-[#10B981]">${(parseFloat(formatUnits(mintOutputEshare[0], 18)) * prices.ggxPriceUsd).toFixed(2)}</p>
+                                <p className="text-[10px] text-[#10B981]">${(parseFloat(formatUnits(mintOutputEshare[0], 18)) * prices.ggxPriceUsd).toFixed(2)}</p>
                               )}
                             </div>
                           )}
                           {inputToken === 'ESHARE_RAGE' && !mintOutputEshare && isFetchingMintOutput && eshareInput && parseFloat(eshareInput) > 0 && (
-                            <div className="flex items-center gap-2 mt-1">
-                              <div className="w-3 h-3 border border-[#10B981] border-t-transparent rounded-full animate-spin" />
-                              <p className="text-sm text-gray-500">Calculating...</p>
+                            <div className="flex items-center gap-1">
+                              <p className="text-[10px] text-gray-400">You Receive (est.)</p>
+                              <div className="w-2.5 h-2.5 border border-[#10B981] border-t-transparent rounded-full animate-spin" />
+                              <p className="text-[10px] text-gray-500">Calculating...</p>
                             </div>
                           )}
                           {inputToken === 'ESHARE_RAGE' && !mintOutputEshare && !isFetchingMintOutput && (
-                            <p className="text-sm font-semibold text-gray-500">—</p>
+                            <div className="flex items-center gap-1.5">
+                              <p className="text-[10px] text-gray-400">You Receive (est.)</p>
+                              <p className="text-xs font-semibold text-gray-500">—</p>
+                            </div>
                           )}
                           {inputToken === 'ETH' && estimatedGgxFromEth && (
                             <div className="flex items-center justify-between">
-                              <p className="text-sm font-semibold text-[#10B981]">~ {estimatedGgxFromEth.toFixed(4)} ERAGE</p>
-                              <div className="text-right">
+                              <div className="flex items-center gap-1.5">
+                                <p className="text-[10px] text-gray-400">You Receive (est.)</p>
+                                <p className="text-xs font-semibold text-[#10B981]">~ {estimatedGgxFromEth.toFixed(4)} ERAGE</p>
+                              </div>
+                              <div className="flex items-center gap-1.5">
                                 {prices.ggxPriceUsd > 0 && (
-                                  <p className="text-[11px] text-[#10B981]">${(estimatedGgxFromEth * prices.ggxPriceUsd).toFixed(2)}</p>
+                                  <p className="text-[10px] text-[#10B981]">${(estimatedGgxFromEth * prices.ggxPriceUsd).toFixed(2)}</p>
                                 )}
                                 <p className="text-[9px] text-[#F59E0B]">incl. 0.69% zap fee</p>
                               </div>
                             </div>
                           )}
                           {inputToken === 'ETH' && !estimatedGgxFromEth && inputAmount && parseFloat(inputAmount) > 0 && (
-                            <div className="flex items-center gap-2 mt-1">
-                              <div className="w-3 h-3 border border-[#10B981] border-t-transparent rounded-full animate-spin" />
-                              <p className="text-sm text-gray-500">Fetching price...</p>
+                            <div className="flex items-center gap-1">
+                              <p className="text-[10px] text-gray-400">You Receive (est.)</p>
+                              <div className="w-2.5 h-2.5 border border-[#10B981] border-t-transparent rounded-full animate-spin" />
+                              <p className="text-[10px] text-gray-500">Fetching price...</p>
                             </div>
                           )}
                           {inputToken === 'ETH' && !estimatedGgxFromEth && (!inputAmount || parseFloat(inputAmount) === 0) && (
-                            <p className="text-sm font-semibold text-gray-500">—</p>
+                            <div className="flex items-center gap-1.5">
+                              <p className="text-[10px] text-gray-400">You Receive (est.)</p>
+                              <p className="text-xs font-semibold text-gray-500">—</p>
+                            </div>
                           )}
                         </div>
                       )}
@@ -2274,29 +2271,29 @@ export default function Dashboard() {
                       
                       {/* All Balances */}
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 text-sm">
-                        <div className="relative bg-[#141416]/80 rounded-lg p-2 border border-[#FF6B35]/15">
-                          <a href={`https://app.uniswap.org/swap?inputCurrency=${CONTRACTS.USDC}&outputCurrency=${CONTRACTS.WETH}&chain=base`} target="_blank" rel="noopener noreferrer" className="absolute top-1.5 right-1.5 text-[9px] text-gray-400/60 hover:text-gray-300 flex items-center gap-0.5 transition-colors">Swap <ArrowUpRight size={8} /></a>
+                        <div className="relative bg-[#141416]/80 rounded-lg py-1.5 px-2 border border-[#FF6B35]/15">
+                          <a href={`https://app.uniswap.org/swap?inputCurrency=${CONTRACTS.USDC}&outputCurrency=${CONTRACTS.WETH}&chain=base`} target="_blank" rel="noopener noreferrer" className="absolute top-1 right-1.5 text-[9px] text-gray-400/60 hover:text-gray-300 flex items-center gap-0.5 transition-colors">Swap <ArrowUpRight size={8} /></a>
                           <p className="text-[11px] text-gray-400 text-center">ETH</p>
-                          <p className="font-mono text-[11px] sm:text-[13px] text-center">{ethBal ? parseFloat(formatUnits(ethBal.value, ethBal.decimals)).toFixed(4) : '0.0000'}</p>
-                          <p className="text-[10px] text-[#10B981] text-center">{ethBal && prices.ethPriceUsd > 0 ? `$${formatPrice(parseFloat(formatUnits(ethBal.value, ethBal.decimals)) * prices.ethPriceUsd)}` : '—'}</p>
+                          <p className="font-mono text-[11px] sm:text-[13px] text-center leading-tight">{ethBal ? parseFloat(formatUnits(ethBal.value, ethBal.decimals)).toFixed(4) : '0.0000'}</p>
+                          <p className="text-[10px] text-[#10B981] text-center leading-tight">{ethBal && prices.ethPriceUsd > 0 ? `$${formatPrice(parseFloat(formatUnits(ethBal.value, ethBal.decimals)) * prices.ethPriceUsd)}` : '—'}</p>
                         </div>
-                        <div className="relative bg-[#141416]/80 rounded-lg p-2 border border-[#FF6B35]/15">
-                          <a href={`https://app.uniswap.org/swap?inputCurrency=ETH&outputCurrency=${CONTRACTS.ESHARE}&chain=base`} target="_blank" rel="noopener noreferrer" className="absolute top-1.5 right-1.5 text-[9px] text-[#8B5CF6]/60 hover:text-[#8B5CF6] flex items-center gap-0.5 transition-colors">Swap <ArrowUpRight size={8} /></a>
+                        <div className="relative bg-[#141416]/80 rounded-lg py-1.5 px-2 border border-[#FF6B35]/15">
+                          <a href={`https://app.uniswap.org/swap?inputCurrency=ETH&outputCurrency=${CONTRACTS.ESHARE}&chain=base`} target="_blank" rel="noopener noreferrer" className="absolute top-1 right-1.5 text-[9px] text-[#8B5CF6]/60 hover:text-[#8B5CF6] flex items-center gap-0.5 transition-colors">Swap <ArrowUpRight size={8} /></a>
                           <p className="text-[11px] text-[#8B5CF6] text-center">ESHARE</p>
-                          <p className="font-mono text-[11px] sm:text-[13px] text-center">{formatNum(eshareBal)}</p>
-                          <p className="text-[10px] text-[#10B981] text-center">{eshareBal && prices.esharePrice > 0 && prices.ethPriceUsd > 0 ? `$${formatPrice(parseFloat(formatUnits(eshareBal, 18)) * prices.esharePrice * prices.ethPriceUsd)}` : '—'}</p>
+                          <p className="font-mono text-[11px] sm:text-[13px] text-center leading-tight">{formatNum(eshareBal)}</p>
+                          <p className="text-[10px] text-[#10B981] text-center leading-tight">{eshareBal && prices.esharePrice > 0 && prices.ethPriceUsd > 0 ? `$${formatPrice(parseFloat(formatUnits(eshareBal, 18)) * prices.esharePrice * prices.ethPriceUsd)}` : '—'}</p>
                         </div>
-                        <div className="relative bg-[#141416]/80 rounded-lg p-2 border border-[#FF6B35]/15">
-                          <a href={`https://app.uniswap.org/swap?inputCurrency=ETH&outputCurrency=${CONTRACTS.RAGE}&chain=base`} target="_blank" rel="noopener noreferrer" className="absolute top-1.5 right-1.5 text-[9px] text-[#EF4444]/60 hover:text-[#EF4444] flex items-center gap-0.5 transition-colors">Swap <ArrowUpRight size={8} /></a>
+                        <div className="relative bg-[#141416]/80 rounded-lg py-1.5 px-2 border border-[#FF6B35]/15">
+                          <a href={`https://app.uniswap.org/swap?inputCurrency=ETH&outputCurrency=${CONTRACTS.RAGE}&chain=base`} target="_blank" rel="noopener noreferrer" className="absolute top-1 right-1.5 text-[9px] text-[#EF4444]/60 hover:text-[#EF4444] flex items-center gap-0.5 transition-colors">Swap <ArrowUpRight size={8} /></a>
                           <p className="text-[11px] text-[#EF4444] text-center">RAGE</p>
-                          <p className="font-mono text-[11px] sm:text-[13px] text-center">{formatNum(rageBal)}</p>
-                          <p className="text-[10px] text-[#10B981] text-center">{rageBal && prices.ragePrice > 0 ? `$${formatPrice(parseFloat(formatUnits(rageBal, 18)) * prices.ragePrice)}` : '—'}</p>
+                          <p className="font-mono text-[11px] sm:text-[13px] text-center leading-tight">{formatNum(rageBal)}</p>
+                          <p className="text-[10px] text-[#10B981] text-center leading-tight">{rageBal && prices.ragePrice > 0 ? `$${formatPrice(parseFloat(formatUnits(rageBal, 18)) * prices.ragePrice)}` : '—'}</p>
                         </div>
-                        <div className="relative bg-[#141416]/80 rounded-lg p-2 border border-[#FF6B35]/15">
-                          <a href={`https://app.uniswap.org/swap?inputCurrency=ETH&outputCurrency=${CONTRACTS.GGX}&chain=base`} target="_blank" rel="noopener noreferrer" className="absolute top-1.5 right-1.5 text-[9px] text-[#FF6B35]/60 hover:text-[#FF6B35] flex items-center gap-0.5 transition-colors">Swap <ArrowUpRight size={8} /></a>
+                        <div className="relative bg-[#141416]/80 rounded-lg py-1.5 px-2 border border-[#FF6B35]/15">
+                          <a href={`https://app.uniswap.org/swap?inputCurrency=ETH&outputCurrency=${CONTRACTS.GGX}&chain=base`} target="_blank" rel="noopener noreferrer" className="absolute top-1 right-1.5 text-[9px] text-[#FF6B35]/60 hover:text-[#FF6B35] flex items-center gap-0.5 transition-colors">Swap <ArrowUpRight size={8} /></a>
                           <p className="text-[11px] text-[#FF6B35] text-center">ERAGE</p>
-                          <p className="font-mono text-[11px] sm:text-[13px] text-center">{formatNum(ggxBal)}</p>
-                          <p className="text-[10px] text-[#10B981] text-center">{ggxBal && prices.ggxPriceUsd > 0 ? `$${formatPrice(parseFloat(formatUnits(ggxBal, 18)) * prices.ggxPriceUsd)}` : '—'}</p>
+                          <p className="font-mono text-[11px] sm:text-[13px] text-center leading-tight">{formatNum(ggxBal)}</p>
+                          <p className="text-[10px] text-[#10B981] text-center leading-tight">{ggxBal && prices.ggxPriceUsd > 0 ? `$${formatPrice(parseFloat(formatUnits(ggxBal, 18)) * prices.ggxPriceUsd)}` : '—'}</p>
                         </div>
                       </div>
                       
@@ -2396,8 +2393,11 @@ export default function Dashboard() {
                       )}
                     </div>
 
+                    {/* Line separator */}
+                    <div className="border-t border-white/10 my-1.5" />
+
                     {/* Widget + Logo side by side */}
-                    <div className="mt-auto pt-2 space-y-2">
+                    <div className="space-y-2">
                       {/* Bootstrapping warning */}
                       <div className="flex items-start gap-1.5 animate-pulse text-[11px]" style={{ animationDuration: '3s', animationTimingFunction: 'ease-in-out' }}>
                         <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#EF4444] mt-1 shrink-0"></span>
@@ -2416,6 +2416,7 @@ export default function Dashboard() {
                       <div className="flex items-center justify-end text-[9px] text-gray-500 pt-1 border-t border-white/5">
                         <div className="flex items-center gap-2.5">
                           <a href="https://t.me/" target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 hover:text-white transition-colors"><MessageCircle size={9} /> Telegram</a>
+                          <a href="/ERAGE_Whitepaper_v2.pdf" target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 hover:text-white transition-colors"><FileText size={9} /> Docs</a>
                           <a href="https://ultraroundmoney.com" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">UltraRound</a>
                           <a href="https://plazm.io" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Plazm</a>
                           <a href="https://fusion.emp.money" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Fusion</a>
