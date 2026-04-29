@@ -675,7 +675,7 @@ function RatioChart({
 // ============ SWAP WIDGET ============
 function UniswapWidget({ ggxAddress }: { ggxAddress: string }) {
   return (
-    <div style={{ width: '100%', height: '280px', overflow: 'hidden', borderRadius: '12px', position: 'relative' }}>
+    <div style={{ width: '100%', height: '100%', minHeight: '280px', overflow: 'hidden', borderRadius: '12px', position: 'relative' }}>
       <iframe
         src={`https://switch.win/widget?network=base&background_color=0a0a0b&font_color=ffffff&secondary_font_color=6b7280&border_color=FF6B35&backdrop_color=transparent&from=0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee&to=${ggxAddress}`}
         allow="clipboard-read; clipboard-write"
@@ -1959,7 +1959,7 @@ export default function Dashboard() {
                       {/* Token Selector Buttons with Mint/Redeem labels */}
                       <div className="flex gap-2">
                         <div className="flex-1 flex flex-col items-center gap-0.5">
-                          <p className="text-[9px] text-[#10B981] font-semibold">Mint</p>
+                          <p className="text-[11px] text-[#10B981] font-semibold">Mint</p>
                           <button 
                             onClick={() => { setInputToken('ETH'); setInputAmount(''); setEshareInput(''); setRageInput(''); }}
                             className={`w-full py-2 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1 ${
@@ -1972,7 +1972,7 @@ export default function Dashboard() {
                           </button>
                         </div>
                         <div className="flex-1 flex flex-col items-center gap-0.5">
-                          <p className="text-[9px] text-[#10B981] font-semibold">Mint</p>
+                          <p className="text-[11px] text-[#10B981] font-semibold">Mint</p>
                           <button 
                             onClick={() => { setInputToken('ESHARE_RAGE'); setInputAmount(''); setEshareInput(''); setRageInput(''); }}
                             className={`w-full py-2 rounded-lg text-xs font-medium transition-all ${
@@ -1985,7 +1985,7 @@ export default function Dashboard() {
                           </button>
                         </div>
                         <div className="flex-1 flex flex-col items-center gap-0.5">
-                          <p className="text-[9px] text-[#A855F7] font-semibold">Redeem</p>
+                          <p className="text-[11px] text-[#A855F7] font-semibold">Redeem</p>
                           <button 
                             onClick={() => { setInputToken('GGX'); setInputAmount(''); setEshareInput(''); setRageInput(''); }}
                             className={`w-full py-2 rounded-lg text-xs font-medium transition-all ${
@@ -2377,8 +2377,8 @@ export default function Dashboard() {
 
                     {/* Widget + Logo side by side — flex-1 fills remaining card height, pushes links to bottom */}
                     <div className="flex-1 flex flex-col justify-between gap-2">
-                      <div className="flex gap-3 items-center">
-                        <div className="flex-1" style={{ maxWidth: 'calc(100% - 160px)' }}>
+                      <div className="flex-1 flex gap-3 items-stretch">
+                        <div className="flex-1" style={{ maxWidth: 'calc(100% - 110px)' }}>
                           <UniswapWidget ggxAddress={CONTRACTS.GGX} />
                         </div>
                         <div className="shrink-0 flex items-center justify-center">
