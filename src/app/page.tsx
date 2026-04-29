@@ -1692,7 +1692,7 @@ export default function Dashboard() {
       </div>
       <div className="noise-overlay" />
       
-      <div className="relative z-10 min-h-screen flex flex-col">
+      <div className="relative z-10 h-screen overflow-hidden flex flex-col">
         {/* Header */}
         <header className="px-3 sm:px-4 py-2" style={{ background: 'transparent' }}>
           <div className="max-w-7xl mx-auto flex items-center justify-between gap-2">
@@ -1754,7 +1754,7 @@ export default function Dashboard() {
           ) : (
             <div className="space-y-3">
               {/* Main Grid */}
-              <div className="grid grid-cols-12 gap-3 overflow-x-hidden" style={{ height: 'calc(100vh - 80px)' }}>
+              <div className="grid grid-cols-12 gap-3 overflow-hidden" style={{ height: 'calc(100vh - 56px)' }}>
                 {/* Left Column */}
                 <div className="col-span-12 lg:col-span-5 flex flex-col gap-3">
                   {/* Top Row - 3 columns on desktop, 1 col on mobile */}
@@ -1950,7 +1950,7 @@ export default function Dashboard() {
 
                 {/* Right Column - Unified Action Box */}
                 <div className="col-span-12 lg:col-span-7 flex flex-col gap-3">
-                  <div className="flex-1 card rounded-xl p-2 sm:p-3 lg:overflow-auto flex flex-col">
+                  <div className="flex-1 card rounded-xl p-2 sm:p-3 overflow-hidden flex flex-col">
                     <div className="space-y-2">
                       {/* Token Selector Buttons with Mint/Redeem labels */}
                       <div className="flex gap-2">
@@ -2377,7 +2377,7 @@ export default function Dashboard() {
                         <div className="flex-1" style={{ maxWidth: 'calc(100% - 80px)' }}>
                           <UniswapWidget ggxAddress={CONTRACTS.GGX} />
                         </div>
-                        <div className="shrink-0 flex items-center justify-center">
+                        <div className="shrink-0 flex items-center justify-center overflow-hidden">
                           <img src="/ERAGE-logo.webp" className="w-20 h-20 sm:w-28 sm:h-28 lg:w-52 lg:h-52 object-contain opacity-60" alt="ERAGE" />
                         </div>
                       </div>
