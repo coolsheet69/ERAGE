@@ -2375,9 +2375,8 @@ export default function Dashboard() {
                     {/* Line separator */}
                     <div className="border-t border-white/10 my-1.5" />
 
-                    {/* Widget + Logo side by side */}
-                    <div className="space-y-2">
-                      {/* Widget left, Logo right */}
+                    {/* Widget + Logo side by side — flex-1 fills remaining card height, pushes links to bottom */}
+                    <div className="flex-1 flex flex-col justify-between gap-2">
                       <div className="flex gap-3 items-center">
                         <div className="flex-1" style={{ maxWidth: 'calc(100% - 160px)' }}>
                           <UniswapWidget ggxAddress={CONTRACTS.GGX} />
@@ -2386,8 +2385,8 @@ export default function Dashboard() {
                           <img src="/ERAGE-logo.webp" className="w-36 h-36 object-contain opacity-60" alt="ERAGE" />
                         </div>
                       </div>
-                      {/* Links row */}
-                      <div className="flex items-center justify-end text-[9px] text-gray-500 pt-1 border-t border-white/5">
+                      {/* Links row — mt-auto sticks to card bottom */}
+                      <div className="mt-auto flex items-center justify-end text-[9px] text-gray-500 pt-1 border-t border-white/5">
                         <div className="flex items-center gap-2.5">
                           <a href="https://t.me/" target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 hover:text-white transition-colors"><MessageCircle size={9} /> Telegram</a>
                           <a href="/ERAGE_Whitepaper_v2.pdf" target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 hover:text-white transition-colors"><FileText size={9} /> Docs</a>
