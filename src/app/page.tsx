@@ -2396,27 +2396,25 @@ export default function Dashboard() {
                       )}
                     </div>
 
-                    {/* Logo — fills space between action button and tax info */}
-                    <div className="flex-1 flex items-center justify-center py-2">
-                      <img src="/ERAGE-logo.webp" className="w-full max-w-[190px] h-auto object-contain opacity-60" alt="GGX" />
-                    </div>
-
-                    {/* Uniswap Widget + Info */}
-                    <div className="mt-auto pt-3 border-t border-white/5 space-y-2">
+                    {/* Widget + Logo side by side */}
+                    <div className="mt-auto pt-2 space-y-2">
                       {/* Bootstrapping warning */}
                       <div className="flex items-start gap-1.5 animate-pulse text-[11px]" style={{ animationDuration: '3s', animationTimingFunction: 'ease-in-out' }}>
                         <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#EF4444] mt-1 shrink-0"></span>
                         <span className="text-[#EF4444] font-semibold">Bootstrapping Phase: Low/Medium Liquidity, suggested trade sizing under $50 each</span>
                       </div>
-
-                      {/* Uniswap Swap Widget */}
-                      <div className="rounded-xl overflow-hidden">
-                        <UniswapWidget ggxAddress={CONTRACTS.GGX} />
+                      {/* Widget left, Logo right */}
+                      <div className="flex gap-3 items-center">
+                        <div className="flex-1">
+                          <UniswapWidget ggxAddress={CONTRACTS.GGX} />
+                        </div>
+                        <div className="shrink-0 flex items-center justify-center">
+                          <img src="/ERAGE-logo.webp" className="w-24 h-24 object-contain opacity-60" alt="ERAGE" />
+                        </div>
                       </div>
-
                       {/* Links row */}
-                      <div className="flex items-center justify-end pt-1 text-[9px] text-gray-500 border-t border-white/5">
-                        <div className="flex items-center gap-2.5" role="navigation" aria-label="External Links">
+                      <div className="flex items-center justify-end text-[9px] text-gray-500 pt-1 border-t border-white/5">
+                        <div className="flex items-center gap-2.5">
                           <a href="https://t.me/" target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 hover:text-white transition-colors"><MessageCircle size={9} /> Telegram</a>
                           <a href="https://ultraroundmoney.com" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">UltraRound</a>
                           <a href="https://plazm.io" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Plazm</a>
