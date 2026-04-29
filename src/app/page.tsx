@@ -672,14 +672,15 @@ function RatioChart({
   )
 }
 
-// ============ UNISWAP WIDGET ============
+// ============ SWAP WIDGET ============
 function UniswapWidget({ ggxAddress }: { ggxAddress: string }) {
   return (
     <iframe
-      src={`https://app.uniswap.org/swap?outputCurrency=${ggxAddress}&chain=base&theme=dark`}
+      src={`https://widget.li.fi/swap?fromChain=bas&toChain=bas&toToken=${ggxAddress}&theme=dark`}
       height="360"
       width="100%"
       style={{ border: 'none', borderRadius: '12px' }}
+      allow="clipboard-write"
     />
   )
 }
