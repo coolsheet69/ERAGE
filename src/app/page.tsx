@@ -1758,7 +1758,7 @@ export default function Dashboard() {
           ) : (
             <div className="space-y-3">
               {/* Main Grid */}
-              <div className="grid grid-cols-12 gap-3 overflow-x-hidden" style={{ minHeight: 'calc(100vh - 140px)' }}>
+              <div className="grid grid-cols-12 gap-3 overflow-x-hidden" style={{ height: 'calc(100vh - 140px)' }}>
                 {/* Left Column */}
                 <div className="col-span-12 lg:col-span-5 flex flex-col gap-3">
                   {/* Top Row - 3 columns on desktop, 1 col on mobile */}
@@ -1954,7 +1954,7 @@ export default function Dashboard() {
 
                 {/* Right Column - Unified Action Box */}
                 <div className="col-span-12 lg:col-span-7 flex flex-col gap-3">
-                  <div className="card rounded-xl p-2 sm:p-3 overflow-auto flex flex-col">
+                  <div className="flex-1 card rounded-xl p-2 sm:p-3 overflow-auto flex flex-col">
                     <div className="space-y-2">
                       {/* Token Selector Buttons with Mint/Redeem labels */}
                       <div className="flex gap-2">
@@ -2371,7 +2371,7 @@ export default function Dashboard() {
                     <div className="border-t border-white/10 my-1.5" />
 
                     {/* Widget + Logo side by side */}
-                    <div className="space-y-2">
+                    <div className="mt-auto space-y-2">
                       {/* Bootstrapping warning */}
                       <div className="flex items-start gap-1.5 animate-pulse text-[11px]" style={{ animationDuration: '3s', animationTimingFunction: 'ease-in-out' }}>
                         <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#EF4444] mt-1 shrink-0"></span>
@@ -2379,11 +2379,11 @@ export default function Dashboard() {
                       </div>
                       {/* Widget left, Logo right */}
                       <div className="flex gap-3 items-center">
-                        <div className="flex-1">
+                        <div className="flex-1" style={{ maxWidth: 'calc(100% - 160px)' }}>
                           <UniswapWidget ggxAddress={CONTRACTS.GGX} />
                         </div>
                         <div className="shrink-0 flex items-center justify-center">
-                          <img src="/ERAGE-logo.webp" className="w-24 h-24 object-contain opacity-60" alt="ERAGE" />
+                          <img src="/ERAGE-logo.webp" className="w-36 h-36 object-contain opacity-60" alt="ERAGE" />
                         </div>
                       </div>
                       {/* Links row */}
