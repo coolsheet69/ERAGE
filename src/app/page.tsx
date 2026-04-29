@@ -1799,7 +1799,7 @@ export default function Dashboard() {
                               <div className="text-center">
                                 <p className="text-xs text-gray-400 font-medium">30D APR</p>
                                 <p className="text-base font-bold flex items-center justify-center gap-1.5">
-                                  <span className="text-[#10B981] animate-apr-glow">~{estimated30dAPR.rate.toFixed(1)}%</span>
+                                  <span className="text-[#10B981] animate-apr-glow">~{Math.floor(estimated30dAPR.rate)}%</span>
                                   <span className="text-[10px] text-gray-500">30d est.</span>
                                 </p>
                               </div>
@@ -1894,13 +1894,13 @@ export default function Dashboard() {
                         {backingBalances && prices.ethPriceUsd > 0 && (
                           <div className="mt-auto pt-2 border-t border-white/10">
                             <p className="text-[12px] font-semibold text-[#FFD700] text-center">
-                              Protocol TVL = ${formatPrice((
+                              Protocol TVL = ${Math.floor((
                                 parseFloat(formatUnits(backingBalances[0], 18)) * prices.esharePrice * prices.ethPriceUsd +
                                 parseFloat(formatUnits(backingBalances[1], 18)) * prices.ragePrice +
                                 (ggxPoolWethBal ? parseFloat(formatUnits(ggxPoolWethBal, 18)) : 0) * prices.ethPriceUsd +
                                 (ggxRagePoolRageBal ? parseFloat(formatUnits(ggxRagePoolRageBal, 18)) : 0) * prices.ragePrice +
                                 (ggxEsharePoolEshareBal ? parseFloat(formatUnits(ggxEsharePoolEshareBal, 18)) : 0) * prices.esharePrice * prices.ethPriceUsd
-                              ))}
+                              )).toLocaleString()}
                             </p>
                           </div>
                         )}
@@ -1955,11 +1955,11 @@ export default function Dashboard() {
                 {/* Right Column - Unified Action Box */}
                 <div className="col-span-12 lg:col-span-7 flex flex-col gap-3">
                   <div className="flex-1 card rounded-xl p-2 sm:p-3 overflow-auto flex flex-col">
-                    <div className="space-y-2">
+                    <div className="space-y-2 flex-1 min-h-0">
                       {/* Token Selector Buttons with Mint/Redeem labels */}
                       <div className="flex gap-2">
                         <div className="flex-1 flex flex-col items-center gap-0.5">
-                          <p className="text-[9px] text-[#10B981] font-semibold">Mint</p>
+                          <p className="text-[10px] text-[#10B981] font-semibold">Mint</p>
                           <button 
                             onClick={() => { setInputToken('ETH'); setInputAmount(''); setEshareInput(''); setRageInput(''); }}
                             className={`w-full py-2 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1 ${
@@ -1972,7 +1972,7 @@ export default function Dashboard() {
                           </button>
                         </div>
                         <div className="flex-1 flex flex-col items-center gap-0.5">
-                          <p className="text-[9px] text-[#10B981] font-semibold">Mint</p>
+                          <p className="text-[10px] text-[#10B981] font-semibold">Mint</p>
                           <button 
                             onClick={() => { setInputToken('ESHARE_RAGE'); setInputAmount(''); setEshareInput(''); setRageInput(''); }}
                             className={`w-full py-2 rounded-lg text-xs font-medium transition-all ${
@@ -1985,7 +1985,7 @@ export default function Dashboard() {
                           </button>
                         </div>
                         <div className="flex-1 flex flex-col items-center gap-0.5">
-                          <p className="text-[9px] text-[#A855F7] font-semibold">Redeem</p>
+                          <p className="text-[10px] text-[#A855F7] font-semibold">Redeem</p>
                           <button 
                             onClick={() => { setInputToken('GGX'); setInputAmount(''); setEshareInput(''); setRageInput(''); }}
                             className={`w-full py-2 rounded-lg text-xs font-medium transition-all ${
@@ -2367,11 +2367,11 @@ export default function Dashboard() {
                       )}
                     </div>
 
-                    {/* Line separator */}
-                    <div className="border-t border-white/10 my-1.5" />
+                    {/* Line separator - pushes to bottom of card */}
+                    <div className="border-t border-white/10 mt-auto" />
 
                     {/* Widget + Logo side by side */}
-                    <div className="space-y-2">
+                    <div className="space-y-2 shrink-0">
                       {/* Bootstrapping warning */}
                       <div className="flex items-start gap-1.5 animate-pulse text-[11px]" style={{ animationDuration: '3s', animationTimingFunction: 'ease-in-out' }}>
                         <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#EF4444] mt-1 shrink-0"></span>
