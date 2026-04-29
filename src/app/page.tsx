@@ -672,6 +672,44 @@ function RatioChart({
   )
 }
 
+// ============ UNISWAP WIDGET ============
+function UniswapWidget({ ggxAddress }: { ggxAddress: string }) {
+  const [SwapWidget, setSwapWidget] = useState<React.ComponentType<any> | null>(null)
+
+  useEffect(() => {
+    import('@uniswap/widgets').then((mod) => {
+      setSwapWidget(() => mod.SwapWidget)
+    })
+  }, [])
+
+  if (!SwapWidget) return (
+    <div className="h-[360px] flex items-center justify-center text-gray-500 text-xs">
+      Loading swap widget...
+    </div>
+  )
+
+  return (
+    <SwapWidget
+      tokenList={[]}
+      defaultOutputTokenAddress={ggxAddress}
+      defaultInputTokenAddress="NATIVE"
+      theme={{
+        primary: '#FF6B35',
+        secondary: '#6B7280',
+        interactive: '#1a1a1c',
+        container: '#0F0F10',
+        module: '#141416',
+        accent: '#FF6B35',
+        outline: '#ffffff1a',
+        dialog: '#0F0F10',
+        fontFamily: 'inherit',
+        borderRadius: { large: 12, medium: 8, small: 4, xsmall: 2 },
+      }}
+      width="100%"
+    />
+  )
+}
+
 // ============ MAIN COMPONENT ============
 export default function Dashboard() {
   const [mounted, setMounted] = useState(false)
@@ -2381,26 +2419,23 @@ export default function Dashboard() {
                       <img src="/ERAGE-logo.webp" className="w-full max-w-[190px] h-auto object-contain opacity-60" alt="GGX" />
                     </div>
 
-                    {/* Tax Info — pinned to bottom of mint/redeem box */}
-                    <div className="mt-auto pt-3 border-t border-white/5 text-[11px] text-gray-400 space-y-1.5">
-                      <div className="flex items-start gap-1.5 animate-pulse" style={{ animationDuration: '3s', animationTimingFunction: 'ease-in-out' }}><span className="inline-block w-1.5 h-1.5 rounded-full bg-[#EF4444] mt-1 shrink-0"></span><span className="text-[#EF4444] font-semibold">Bootstrapping Phase: Low/Medium Liquidity, suggested trade sizing under $50 each</span></div>
-                      <div className="flex items-start gap-1.5"><span className="inline-block w-1.5 h-1.5 rounded-full bg-[#10B981] mt-1 shrink-0"></span><span className="text-[#10B981] font-semibold">ERAGE can only be minted with 1:1 backing, NO inflation EVER!!</span></div>
-                      <div className="flex items-start gap-1.5"><span className="inline-block w-1.5 h-1.5 rounded-full bg-[#FFD700] mt-1 shrink-0"></span><span className="text-[#FFD700]">Backing Ratio grows every mint AND redeem</span></div>
-                      <div className="flex items-start gap-1.5"><span className="inline-block w-1.5 h-1.5 rounded-full bg-[#FFD700] mt-1 shrink-0"></span><span className="text-[#FFD700]">Redeem any time for Full Backing</span></div>
-                      <div className="flex items-start gap-1.5">
-                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#FFD700] mt-1 shrink-0"></span>
-                        <span className="text-[#FFD700]">2.5% tax on Mint & Redeem</span>
+                    {/* Uniswap Widget + Info */}
+                    <div className="mt-auto pt-3 border-t border-white/5 space-y-2">
+                      {/* Bootstrapping warning */}
+                      <div className="flex items-start gap-1.5 animate-pulse text-[11px]" style={{ animationDuration: '3s', animationTimingFunction: 'ease-in-out' }}>
+                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#EF4444] mt-1 shrink-0"></span>
+                        <span className="text-[#EF4444] font-semibold">Bootstrapping Phase: Low/Medium Liquidity, suggested trade sizing under $50 each</span>
                       </div>
-                      <div className="pl-3.5 space-y-0.5 text-gray-500">
-                        <div>--&gt; 1.00% Linear Backing</div>
-                        <div>--&gt; 0.12% Fixed Backing</div>
-                        <div>--&gt; 0.69% Burn RAGE</div>
-                        <div>--&gt; 0.69% Burn Eshare</div>
+
+                      {/* Uniswap Swap Widget */}
+                      <div className="rounded-xl overflow-hidden">
+                        <UniswapWidget ggxAddress={CONTRACTS.GGX} />
                       </div>
-                      {/* Links row — bottom right of mint/redeem card */}
-                      <div className="flex items-center justify-end text-[9px] text-gray-500 pt-2 mt-1 border-t border-white/5">
-                        <div className="flex items-center gap-2.5">
-                          <a href="https://t.me/" className="flex items-center gap-0.5 hover:text-white transition-colors"><MessageCircle size={9} /> Telegram</a>
+
+                      {/* Links row */}
+                      <div className="flex items-center justify-end pt-1 text-[9px] text-gray-500 border-t border-white/5">
+                        <div className="flex items-center gap-2.5" role="navigation" aria-label="External Links">
+                          <a href="https://t.me/" target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 hover:text-white transition-colors"><MessageCircle size={9} /> Telegram</a>
                           <a href="https://ultraroundmoney.com" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">UltraRound</a>
                           <a href="https://plazm.io" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Plazm</a>
                           <a href="https://fusion.emp.money" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Fusion</a>
