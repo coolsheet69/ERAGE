@@ -1954,7 +1954,7 @@ export default function Dashboard() {
 
                 {/* Right Column - Unified Action Box */}
                 <div className="col-span-12 lg:col-span-7 flex flex-col gap-3">
-                  <div className="flex-1 card rounded-xl p-2 sm:p-3 overflow-auto flex flex-col">
+                  <div className="card rounded-xl p-2 sm:p-3 overflow-auto flex flex-col">
                     <div className="space-y-2">
                       {/* Token Selector Buttons with Mint/Redeem labels */}
                       <div className="flex gap-2">
@@ -2166,33 +2166,17 @@ export default function Dashboard() {
                       {inputToken === 'GGX' ? (
                         // Redeem output
                         redeemOutput ? (
-                          <div className="bg-[#141416]/80 rounded-lg px-2 py-0.5 space-y-0.5">
-                            <p className="text-[10px] text-gray-400">You Receive</p>
-                            <div className="grid grid-cols-2 gap-1.5">
-                              <div className="bg-[#8B5CF6]/10 rounded-md py-0.5 px-1.5 border border-[#8B5CF6]/20">
-                                <div className="flex items-center justify-between">
-                                  <p className="text-[9px] text-gray-400">ESHARE</p>
-                                  {prices.esharePrice > 0 && prices.ethPriceUsd > 0 && (
-                                    <p className="text-[10px] text-[#10B981]">${(parseFloat(formatUnits(redeemOutput[0], 18)) * prices.esharePrice * prices.ethPriceUsd).toFixed(2)}</p>
-                                  )}
-                                </div>
-                                <p className="text-xs font-semibold text-[#8B5CF6] leading-tight">{formatNum(redeemOutput[0])}</p>
-                              </div>
-                              <div className="bg-[#EF4444]/10 rounded-md py-0.5 px-1.5 border border-[#EF4444]/20">
-                                <div className="flex items-center justify-between">
-                                  <p className="text-[9px] text-gray-400">RAGE</p>
-                                  {prices.ragePrice > 0 && (
-                                    <p className="text-[10px] text-[#10B981]">${(parseFloat(formatUnits(redeemOutput[1], 18)) * prices.ragePrice).toFixed(2)}</p>
-                                  )}
-                                </div>
-                                <p className="text-xs font-semibold text-[#EF4444] leading-tight">{formatNum(redeemOutput[1])}</p>
+                          <div className="bg-[#141416]/80 rounded-lg px-2 py-0.5">
+                            <div className="flex items-center justify-between">
+                              <p className="text-[10px] text-gray-400">You Receive</p>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-semibold text-[#8B5CF6]">{formatNum(redeemOutput[0])} ESHARE</span>
+                                <span className="text-xs font-semibold text-[#EF4444]">{formatNum(redeemOutput[1])} RAGE</span>
+                                {prices.esharePrice > 0 && prices.ethPriceUsd > 0 && prices.ragePrice > 0 && (
+                                  <span className="text-[10px] text-gray-400">${(parseFloat(formatUnits(redeemOutput[0], 18)) * prices.esharePrice * prices.ethPriceUsd + parseFloat(formatUnits(redeemOutput[1], 18)) * prices.ragePrice).toFixed(2)}</span>
+                                )}
                               </div>
                             </div>
-                            {prices.esharePrice > 0 && prices.ethPriceUsd > 0 && prices.ragePrice > 0 && (
-                              <p className="text-[9px] text-gray-400 text-right">
-                                Total: ${(parseFloat(formatUnits(redeemOutput[0], 18)) * prices.esharePrice * prices.ethPriceUsd + parseFloat(formatUnits(redeemOutput[1], 18)) * prices.ragePrice).toFixed(2)}
-                              </p>
-                            )}
                           </div>
                         ) : (
                           <div className="bg-[#141416]/80 rounded-lg px-2 py-0.5">
@@ -2345,31 +2329,21 @@ export default function Dashboard() {
 
                       {/* Action Buttons */}
                       {inputToken === 'ESHARE_RAGE' && needsApproval ? (
-                        <div className="space-y-2">
-                          <div className="flex gap-2">
-                            <button 
-                              onClick={handleApproveEshare} 
-                              disabled={isLoading || !eshareInput || parseFloat(eshareInput) === 0 || !needsEshareApproval}
-                              className={`w-1/2 py-3 rounded-lg text-sm font-semibold bg-[#8B5CF6] hover:bg-[#8B5CF6]/80 ${needsEshareApproval ? '' : 'opacity-30 cursor-not-allowed'}`}
-                            >
-                              Approve ESHARE
-                            </button>
-                            <button 
-                              onClick={handleApproveRage} 
-                              disabled={isLoading || !rageInput || parseFloat(rageInput) === 0 || !needsRageApproval}
-                              className={`w-1/2 py-3 rounded-lg text-sm font-semibold bg-[#8B5CF6] hover:bg-[#8B5CF6]/80 ${needsRageApproval ? '' : 'opacity-30 cursor-not-allowed'}`}
-                            >
-                              Approve RAGE
-                            </button>
-                          </div>
-                          {/* Mint button always visible, disabled until both approved */}
+                        <div className="flex gap-2">
                           <button 
-                              onClick={handleAction} 
-                              disabled={isLoading || needsEshareApproval || needsRageApproval || (!eshareInput || parseFloat(eshareInput) === 0) && (!rageInput || parseFloat(rageInput) === 0)}
-                              className="w-full py-3 rounded-lg text-sm font-semibold disabled:opacity-50 btn-primary"
-                            >
-                              Mint ERAGE
-                            </button>
+                            onClick={handleApproveEshare} 
+                            disabled={isLoading || !eshareInput || parseFloat(eshareInput) === 0 || !needsEshareApproval}
+                            className={`w-1/2 py-3 rounded-lg text-sm font-semibold bg-[#8B5CF6] hover:bg-[#8B5CF6]/80 ${needsEshareApproval ? '' : 'opacity-30 cursor-not-allowed'}`}
+                          >
+                            Approve ESHARE
+                          </button>
+                          <button 
+                            onClick={handleApproveRage} 
+                            disabled={isLoading || !rageInput || parseFloat(rageInput) === 0 || !needsRageApproval}
+                            className={`w-1/2 py-3 rounded-lg text-sm font-semibold bg-[#8B5CF6] hover:bg-[#8B5CF6]/80 ${needsRageApproval ? '' : 'opacity-30 cursor-not-allowed'}`}
+                          >
+                            Approve RAGE
+                          </button>
                         </div>
                       ) : (
                         <button 
