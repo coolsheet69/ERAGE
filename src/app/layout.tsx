@@ -6,8 +6,8 @@ import { Providers } from './providers'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'ERAGE Protocol',
-  description: 'Dual-backed ratchet token on Base. — Only UP!!  NO inflation EVER!!',
+  title: 'ERAGE Protocol — Dual-Backed Ratchet Token on Base',
+  description: 'ERAGE is a dual-backed ratchet token on Base Network. Backed 1:1 by ESHARE + RAGE. Only UP — NO inflation EVER. Mint, redeem, and bags get bigger.',
   icons: {
     icon: [
       { url: '/favicon.png', type: 'image/png' },
@@ -15,15 +15,15 @@ export const metadata: Metadata = {
     ],
   },
   openGraph: {
-    title: 'ERAGE Protocol',
-    description: 'Dual-backed ratchet token on Base. — Only UP!!  NO inflation EVER!!',
-    images: ['/ERAGE-logo.webp'],
+    title: 'ERAGE Protocol — Dual-Backed Ratchet Token on Base',
+    description: 'ERAGE is a dual-backed ratchet token on Base Network. Backed 1:1 by ESHARE + RAGE. Only UP — NO inflation EVER. Mint, redeem, and bags get bigger.',
+    images: [{ url: '/og-image.png', width: 1200, height: 630 }],
   },
   twitter: {
-    card: 'summary',
-    title: 'ERAGE Protocol',
-    description: 'Dual-backed ratchet token on Base. — Only UP!!  NO inflation EVER!!',
-    images: ['/ERAGE-logo.webp'],
+    card: 'summary_large_image',
+    title: 'ERAGE Protocol — Dual-Backed Ratchet Token on Base',
+    description: 'ERAGE is a dual-backed ratchet token on Base Network. Backed 1:1 by ESHARE + RAGE. Only UP — NO inflation EVER. Mint, redeem, and bags get bigger.',
+    images: ['/og-image.png'],
   },
 }
 
