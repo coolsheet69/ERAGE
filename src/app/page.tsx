@@ -676,7 +676,7 @@ function RatioChart({
 // ============ SWAP WIDGET ============
 function UniswapWidget({ ggxAddress }: { ggxAddress: string }) {
   return (
-    <div style={{ width: '100%', height: '100%', minHeight: '240px', overflow: 'hidden', borderRadius: '12px', position: 'relative' }}>
+    <div style={{ width: '100%', height: '100%', minHeight: '260px', overflow: 'hidden', borderRadius: '12px', position: 'relative' }}>
       <iframe
         src={`https://switch.win/widget?network=base&background_color=0a0a0b&font_color=ffffff&secondary_font_color=6b7280&border_color=FF6B35&backdrop_color=transparent&from=0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee&to=${ggxAddress}`}
         allow="clipboard-read; clipboard-write"
@@ -1744,6 +1744,10 @@ export default function Dashboard() {
                 <span className="w-1.5 h-1.5 rounded-full bg-[#3B82F6] animate-pulse" />
                 Base
               </span>
+              <span className="hidden lg:flex items-center gap-1.5 animate-pulse text-[9px]" style={{ animationDuration: '3s', animationTimingFunction: 'ease-in-out' }}>
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#EF4444] shrink-0"></span>
+                <span className="text-[#EF4444] font-semibold">Bootstrapping Phase: Low/Medium Liquidity, suggested trade sizing under $50 each</span>
+              </span>
             </div>
             
             <div className="flex items-center gap-1 sm:gap-2 shrink-0">
@@ -1793,7 +1797,7 @@ export default function Dashboard() {
           ) : (
             <div className="space-y-2">
               {/* Main Grid */}
-              <div className="grid grid-cols-12 gap-2 overflow-hidden" style={{ height: 'calc(100vh - 48px)' }}>
+              <div className="grid grid-cols-12 gap-2 overflow-hidden" style={{ height: 'calc(100vh - 56px)' }}>
                 {/* Left Column */}
                 <div className="col-span-12 lg:col-span-5 flex flex-col gap-2">
                   {/* Top Row - 3 columns on desktop, 1 col on mobile */}
@@ -2403,10 +2407,10 @@ export default function Dashboard() {
                           {actionButtonText}
                         </button>
                       )}
-                      {/* Bootstrapping warning — inside same container as the action button */}
-                      <div className="flex items-start gap-1.5 animate-pulse text-[11px]" style={{ animationDuration: '3s', animationTimingFunction: 'ease-in-out' }}>
-                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#EF4444] mt-1 shrink-0"></span>
-                        <span className="text-[#EF4444] font-semibold">Bootstrapping Phase: Low/Medium Liquidity, suggested trade sizing under $50 each</span>
+                      {/* Bootstrapping warning moved to header on desktop; show compact version on mobile only */}
+                      <div className="lg:hidden flex items-start gap-1.5 animate-pulse text-[10px]" style={{ animationDuration: '3s', animationTimingFunction: 'ease-in-out' }}>
+                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#EF4444] mt-0.5 shrink-0"></span>
+                        <span className="text-[#EF4444] font-semibold">Bootstrapping: Trade under $50</span>
                       </div>
                     </div>
 
