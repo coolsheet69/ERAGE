@@ -63,9 +63,11 @@ const V3_FEES = {
 // Pool fee configuration (V3 pools)
 const POOL_FEES = {
   WETH_USDC: 500,      // 0.05% - Major pair, typically lowest fee
-  WETH_ESHARE: 10000,  // 1% - ESHARE/ETH pool
+  WETH_ESHARE: 10000,  // 1% - ESHARE/WETH pool
   USDC_RAGE: 10000,    // 1% - RAGE/USDC pool
-  ESHARE_RAGE: 10000,  // 1% (via USDC)
+  // Note: No direct ESHARE/USDC pool exists. ESHARE↔RAGE routing must go through WETH:
+  //   ESHARE → WETH (1%) → USDC (0.05%) → RAGE (1%)
+  //   RAGE → USDC (1%) → WETH (0.05%) → ESHARE (1%)
 }
 
 /**
@@ -106,16 +108,18 @@ const V3_PATHS = {
     [POOL_FEES.WETH_USDC, POOL_FEES.USDC_RAGE]
   ),
   
-  // ESHARE → RAGE (multi-hop via USDC)
+  // ESHARE → RAGE (multi-hop via WETH → USDC) — matches contract's getCommonPaths()
+  // There is NO direct ESHARE/USDC pool, must route through WETH first
   ESHARE_TO_RAGE: encodeV3Path(
-    [CONTRACTS.ESHARE, CONTRACTS.USDC, CONTRACTS.RAGE],
-    [POOL_FEES.ESHARE_RAGE, POOL_FEES.USDC_RAGE]
+    [CONTRACTS.ESHARE, CONTRACTS.WETH, CONTRACTS.USDC, CONTRACTS.RAGE],
+    [POOL_FEES.WETH_ESHARE, POOL_FEES.WETH_USDC, POOL_FEES.USDC_RAGE]
   ),
   
-  // RAGE → ESHARE (multi-hop via USDC)
+  // RAGE → ESHARE (multi-hop via USDC → WETH) — matches contract's getCommonPaths()
+  // There is NO direct USDC/ESHARE pool, must route through WETH
   RAGE_TO_ESHARE: encodeV3Path(
-    [CONTRACTS.RAGE, CONTRACTS.USDC, CONTRACTS.ESHARE],
-    [POOL_FEES.USDC_RAGE, POOL_FEES.ESHARE_RAGE]
+    [CONTRACTS.RAGE, CONTRACTS.USDC, CONTRACTS.WETH, CONTRACTS.ESHARE],
+    [POOL_FEES.USDC_RAGE, POOL_FEES.WETH_USDC, POOL_FEES.WETH_ESHARE]
   ),
 }
 
@@ -2739,7 +2743,7 @@ export default function Dashboard() {
                             <li>ETH → ESHARE: Direct via WETH/ESHARE pool ({POOL_FEES.WETH_ESHARE/10000}% fee)</li>
                             <li>ETH → RAGE: WETH → USDC → RAGE ({POOL_FEES.WETH_USDC/10000}% + {POOL_FEES.USDC_RAGE/10000}% fees)</li>
                             <li className="text-[#3B82F6]">QuoterV2: Queries live pool prices to calculate optimal ETH split (no oracle needed)</li>
-                            <li className="text-[#3B82F6]">Rebalance: Swaps excess token for deficient one to minimize dust returned</li>
+                            <li className="text-[#3B82F6]">Rebalance: ESHARE → WETH → USDC → RAGE (3-hop, auto-skips if RAGE is excess)</li>
                             <li className="text-[#F59E0B]">ETH zaps: 0.69% tax sent to adminWallet before swapping</li>
                           </ul>
                         </div>
