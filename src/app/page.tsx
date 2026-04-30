@@ -691,14 +691,14 @@ function RatioChart({
 // ============ SWAP WIDGET ============
 function UniswapWidget({ ggxAddress }: { ggxAddress: string }) {
   return (
-    <div style={{ width: '100%', minHeight: '300px', height: '100%', overflow: 'hidden', borderRadius: '12px', position: 'relative' }}>
+    <div style={{ width: '100%', height: '100%', overflow: 'hidden', borderRadius: '12px', position: 'relative' }}>
       <iframe
         src={`https://switch.win/widget?network=base&background_color=0a0a0b&font_color=ffffff&secondary_font_color=6b7280&border_color=FF6B35&backdrop_color=transparent&from=0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee&to=${ggxAddress}`}
         allow="clipboard-read; clipboard-write"
         style={{
           border: 'none',
           width: '125%',
-          height: '125%',
+          height: '460px',
           transform: 'scale(0.80)',
           transformOrigin: 'top left',
           borderRadius: '12px',
@@ -2499,20 +2499,20 @@ export default function Dashboard() {
                       </div>
                     </div>
 
-                    {/* Widget + Logo side by side — flex-1 fills remaining card space on desktop, natural height on mobile */}
-                    <div className="lg:flex-1 flex flex-col border-t border-white/10 pt-1.5 mt-1 lg:min-h-0 lg:overflow-hidden" style={{ minHeight: '200px' }}>
-                      <div className="flex-1 flex gap-2 items-stretch min-h-0 lg:overflow-hidden">
-                        <div className="flex-1 min-w-0 min-h-0 overflow-hidden">
+                    {/* Widget + Logo side by side — fixed height on mobile so no double-scroll, flex-1 on desktop */}
+                    <div className="flex flex-col border-t border-white/10 pt-1.5 mt-1" style={{ height: '420px' }}>
+                      <div className="flex-1 flex gap-2 items-stretch">
+                        <div className="flex-1 min-w-0">
                           <UniswapWidget ggxAddress={CONTRACTS.GGX} />
                         </div>
-                        <div className="hidden sm:flex shrink-0 items-center justify-center overflow-hidden">
+                        <div className="hidden sm:flex shrink-0 items-center justify-center">
                           <img src="/ERAGE-logo.webp" className="w-16 h-16 sm:w-20 sm:h-20 lg:w-48 lg:h-48 object-contain opacity-60" alt="ERAGE" />
                         </div>
                       </div>
                       {/* Links row */}
                       <div className="flex items-center justify-end text-[9px] text-gray-500 pt-1 border-t border-white/5">
                         <div className="flex items-center gap-2.5">
-                          <a href="https://t.me/" target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 hover:text-white transition-colors"><MessageCircle size={9} /> Telegram</a>
+                          <a href="https://t.me/+ZDuHXsPY1Jg3MmU5" target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 hover:text-white transition-colors"><MessageCircle size={9} /> Telegram</a>
                           <a href="/ERAGE_Whitepaper_v2.pdf" target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 hover:text-white transition-colors"><FileText size={9} /> Docs</a>
                           <a href="https://ultraroundmoney.com" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">UltraRound</a>
                           <a href="https://plazm.io" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Plazm</a>
