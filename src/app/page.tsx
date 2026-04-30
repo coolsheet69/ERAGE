@@ -698,7 +698,7 @@ function UniswapWidget({ ggxAddress }: { ggxAddress: string }) {
         style={{
           border: 'none',
           width: '125%',
-          height: '460px',
+          height: '640px',
           transform: 'scale(0.80)',
           transformOrigin: 'top left',
           borderRadius: '12px',
@@ -2500,7 +2500,7 @@ export default function Dashboard() {
                     </div>
 
                     {/* Widget + Logo side by side — fixed height on mobile so no double-scroll, flex-1 on desktop */}
-                    <div className="flex flex-col border-t border-white/10 pt-1.5 mt-1" style={{ height: '420px' }}>
+                    <div className="flex flex-col border-t border-white/10 pt-1.5 mt-1" style={{ height: '580px' }}>
                       <div className="flex-1 flex gap-2 items-stretch">
                         <div className="flex-1 min-w-0">
                           <UniswapWidget ggxAddress={CONTRACTS.GGX} />
