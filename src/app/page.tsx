@@ -2481,11 +2481,8 @@ export default function Dashboard() {
                       </div>
                     </div>
 
-                    {/* Line separator */}
-                    <div className="border-t border-white/10 my-0" />
-
                     {/* Widget + Logo side by side — flex-1 fills remaining card height, pushes links to bottom */}
-                    <div className="flex-1 flex flex-col justify-between gap-1.5">
+                    <div className="flex-1 flex flex-col justify-between gap-1.5 border-t border-white/10 pt-1.5 mt-1">
                       <div className="flex-1 flex gap-3 items-stretch">
                         <div className="flex-1" style={{ maxWidth: 'calc(100% - 80px)' }}>
                           <UniswapWidget ggxAddress={CONTRACTS.GGX} />
