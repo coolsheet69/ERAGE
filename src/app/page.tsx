@@ -676,18 +676,17 @@ function RatioChart({
 // ============ SWAP WIDGET ============
 function UniswapWidget({ ggxAddress }: { ggxAddress: string }) {
   return (
-    <div style={{ width: '100%', height: '100%', overflow: 'hidden', borderRadius: '12px', position: 'relative', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ width: '100%', height: '100%', overflow: 'hidden', borderRadius: '12px', position: 'relative' }}>
       <iframe
         src={`https://switch.win/widget?network=base&background_color=0a0a0b&font_color=ffffff&secondary_font_color=6b7280&border_color=FF6B35&backdrop_color=transparent&from=0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee&to=${ggxAddress}`}
         allow="clipboard-read; clipboard-write"
         style={{
           border: 'none',
-          width: '150%',
-          height: '150%',
-          transform: 'scale(0.667)',
+          width: '133%',
+          height: '133%',
+          transform: 'scale(0.75)',
           transformOrigin: 'top left',
           borderRadius: '12px',
-          flexShrink: 0,
         }}
       />
     </div>
@@ -2066,7 +2065,7 @@ export default function Dashboard() {
                 {/* Right Column - Unified Action Box */}
                 <div className="col-span-12 lg:col-span-7 flex flex-col gap-2 min-h-0 overflow-y-auto lg:overflow-hidden">
                   <div className="flex-1 card rounded-xl p-2 overflow-hidden flex flex-col min-h-0">
-                    <div className="space-y-1">
+                    <div className="shrink-0 space-y-1">
                       <div className="flex gap-2">
                         <div className="flex-1 flex flex-col items-center gap-0.5">
                           <p className="text-[11px] text-[#10B981] font-semibold">Mint</p>
@@ -2489,7 +2488,7 @@ export default function Dashboard() {
                           <UniswapWidget ggxAddress={CONTRACTS.GGX} />
                         </div>
                         <div className="shrink-0 flex items-center justify-center overflow-hidden">
-                          <img src="/ERAGE-logo.webp" className="w-16 h-16 sm:w-20 sm:h-20 lg:w-36 lg:h-36 object-contain opacity-60" alt="ERAGE" />
+                          <img src="/ERAGE-logo.webp" className="w-16 h-16 sm:w-20 sm:h-20 lg:w-24 lg:h-24 object-contain opacity-60" alt="ERAGE" />
                         </div>
                       </div>
                       {/* Links row */}
