@@ -676,7 +676,7 @@ function RatioChart({
 // ============ SWAP WIDGET ============
 function UniswapWidget({ ggxAddress }: { ggxAddress: string }) {
   return (
-    <div style={{ width: '100%', height: '100%', overflow: 'hidden', borderRadius: '12px', position: 'relative' }}>
+    <div style={{ width: '100%', height: '100%', overflow: 'hidden', borderRadius: '12px', position: 'relative', display: 'flex', flexDirection: 'column' }}>
       <iframe
         src={`https://switch.win/widget?network=base&background_color=0a0a0b&font_color=ffffff&secondary_font_color=6b7280&border_color=FF6B35&backdrop_color=transparent&from=0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee&to=${ggxAddress}`}
         allow="clipboard-read; clipboard-write"
@@ -687,6 +687,7 @@ function UniswapWidget({ ggxAddress }: { ggxAddress: string }) {
           transform: 'scale(0.667)',
           transformOrigin: 'top left',
           borderRadius: '12px',
+          flexShrink: 0,
         }}
       />
     </div>
@@ -1790,7 +1791,7 @@ export default function Dashboard() {
   }
   
   return (
-    <div className="min-h-screen bg-[#0A0A0B] text-white overflow-x-hidden">
+    <div className="h-screen bg-[#0A0A0B] text-white overflow-hidden">
       {/* Background Effects */}
       <div className="fixed inset-0 pointer-events-none">
         <img src="/ERAGE-background.webp" alt="" className="w-full h-full object-cover" />
@@ -1798,7 +1799,7 @@ export default function Dashboard() {
       </div>
       <div className="noise-overlay" />
       
-      <div className="relative z-10 h-screen overflow-hidden flex flex-col">
+      <div className="relative z-10 h-full flex flex-col overflow-hidden">
         {/* Header */}
         <header className="px-3 sm:px-4 py-1" style={{ background: 'transparent' }}>
           <div className="max-w-7xl mx-auto flex items-center justify-between gap-2">
@@ -1851,7 +1852,7 @@ export default function Dashboard() {
         </header>
         
         {/* Main Content */}
-        <main className="flex-1 max-w-7xl mx-auto w-full px-2 sm:px-3 py-1">
+        <main className="flex-1 max-w-7xl mx-auto w-full px-2 sm:px-3 py-1 min-h-0 flex flex-col">
           {!isConnected ? (
             <div className="flex flex-col items-center justify-center h-[calc(100vh-200px)] animate-fade-in-up">
               <img src="/ERAGE-logo.webp" className="w-48 h-48 rounded-3xl object-cover shadow-2xl shadow-[#FF6B35]/30 animate-pulse-glow" alt="ERAGE" />
@@ -1862,11 +1863,11 @@ export default function Dashboard() {
               </button>
             </div>
           ) : (
-            <div className="space-y-1">
+            <div className="flex-1 min-h-0 flex flex-col">
               {/* Main Grid */}
-              <div className="grid grid-cols-12 gap-2 overflow-hidden" style={{ height: 'calc(100vh - 52px)' }}>
+              <div className="flex-1 grid grid-cols-12 gap-2 min-h-0 overflow-hidden">
                 {/* Left Column */}
-                <div className="col-span-12 lg:col-span-5 flex flex-col gap-2">
+                <div className="col-span-12 lg:col-span-5 flex flex-col gap-2 min-h-0 overflow-y-auto lg:overflow-hidden">
                   {/* Top Row - 3 columns on desktop, 1 col on mobile */}
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2" style={{ minHeight: '80px' }}>
                     {/* Backing Ratio */}
@@ -2019,7 +2020,7 @@ export default function Dashboard() {
                   </div>
                   
                   {/* Ratio Chart with Time Range Buttons - grows to match mint/redeem box */}
-                  <div className="flex-1 card rounded-xl p-2 flex flex-col">
+                  <div className="flex-1 card rounded-xl p-2 flex flex-col min-h-0">
                     <div className="flex items-center justify-between mb-1">
                       <div>
                         <h3 className="text-xs sm:text-sm font-semibold flex items-center gap-1.5 flex-wrap">
@@ -2063,8 +2064,8 @@ export default function Dashboard() {
                 </div>
 
                 {/* Right Column - Unified Action Box */}
-                <div className="col-span-12 lg:col-span-7 flex flex-col gap-2">
-                  <div className="flex-1 card rounded-xl p-2 overflow-hidden flex flex-col">
+                <div className="col-span-12 lg:col-span-7 flex flex-col gap-2 min-h-0 overflow-y-auto lg:overflow-hidden">
+                  <div className="flex-1 card rounded-xl p-2 overflow-hidden flex flex-col min-h-0">
                     <div className="space-y-1">
                       <div className="flex gap-2">
                         <div className="flex-1 flex flex-col items-center gap-0.5">
@@ -2482,9 +2483,9 @@ export default function Dashboard() {
                     </div>
 
                     {/* Widget + Logo side by side — flex-1 fills remaining card space */}
-                    <div className="flex-1 flex flex-col border-t border-white/10 pt-1.5 mt-1 min-h-0">
-                      <div className="flex-1 flex gap-2 items-stretch min-h-0">
-                        <div className="flex-1 min-w-0 min-h-0">
+                    <div className="flex-1 flex flex-col border-t border-white/10 pt-1.5 mt-1 min-h-0 overflow-hidden">
+                      <div className="flex-1 flex gap-2 items-stretch min-h-0 overflow-hidden">
+                        <div className="flex-1 min-w-0 min-h-0 overflow-hidden">
                           <UniswapWidget ggxAddress={CONTRACTS.GGX} />
                         </div>
                         <div className="shrink-0 flex items-center justify-center overflow-hidden">
