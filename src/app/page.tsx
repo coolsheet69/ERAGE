@@ -676,7 +676,7 @@ function RatioChart({
 // ============ SWAP WIDGET ============
 function UniswapWidget({ ggxAddress }: { ggxAddress: string }) {
   return (
-    <div style={{ width: '100%', height: '100%', minHeight: '260px', overflow: 'hidden', borderRadius: '12px', position: 'relative' }}>
+    <div style={{ width: '100%', height: '100%', minHeight: '220px', overflow: 'hidden', borderRadius: '12px', position: 'relative' }}>
       <iframe
         src={`https://switch.win/widget?network=base&background_color=0a0a0b&font_color=ffffff&secondary_font_color=6b7280&border_color=FF6B35&backdrop_color=transparent&from=0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee&to=${ggxAddress}`}
         allow="clipboard-read; clipboard-write"
@@ -1800,7 +1800,7 @@ export default function Dashboard() {
       
       <div className="relative z-10 h-screen overflow-hidden flex flex-col">
         {/* Header */}
-        <header className="px-3 sm:px-4 py-2" style={{ background: 'transparent' }}>
+        <header className="px-3 sm:px-4 py-1" style={{ background: 'transparent' }}>
           <div className="max-w-7xl mx-auto flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 sm:gap-3 min-w-0">
               <img src="/ERAGE-logo.webp" className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl object-cover shadow-lg shadow-[#FF6B35]/20 shrink-0" alt="GGX" />
@@ -1851,7 +1851,7 @@ export default function Dashboard() {
         </header>
         
         {/* Main Content */}
-        <main className="flex-1 max-w-7xl mx-auto w-full px-2 sm:px-3 py-1.5 sm:py-2">
+        <main className="flex-1 max-w-7xl mx-auto w-full px-2 sm:px-3 py-1">
           {!isConnected ? (
             <div className="flex flex-col items-center justify-center h-[calc(100vh-200px)] animate-fade-in-up">
               <img src="/ERAGE-logo.webp" className="w-48 h-48 rounded-3xl object-cover shadow-2xl shadow-[#FF6B35]/30 animate-pulse-glow" alt="ERAGE" />
@@ -1862,9 +1862,9 @@ export default function Dashboard() {
               </button>
             </div>
           ) : (
-            <div className="space-y-2">
+            <div className="space-y-1">
               {/* Main Grid */}
-              <div className="grid grid-cols-12 gap-2 overflow-hidden" style={{ height: 'calc(100vh - 56px)' }}>
+              <div className="grid grid-cols-12 gap-2 overflow-hidden" style={{ height: 'calc(100vh - 36px)' }}>
                 {/* Left Column */}
                 <div className="col-span-12 lg:col-span-5 flex flex-col gap-2">
                   {/* Top Row - 3 columns on desktop, 1 col on mobile */}
@@ -2019,8 +2019,8 @@ export default function Dashboard() {
                   </div>
                   
                   {/* Ratio Chart with Time Range Buttons - grows to match mint/redeem box */}
-                  <div className="flex-1 card rounded-xl p-3 flex flex-col">
-                    <div className="flex items-center justify-between mb-2">
+                  <div className="flex-1 card rounded-xl p-2 flex flex-col">
+                    <div className="flex items-center justify-between mb-1">
                       <div>
                         <h3 className="text-xs sm:text-sm font-semibold flex items-center gap-1.5 flex-wrap">
                           <span className="w-2 h-2 rounded-full bg-[#10B981]"></span>
@@ -2064,14 +2064,14 @@ export default function Dashboard() {
 
                 {/* Right Column - Unified Action Box */}
                 <div className="col-span-12 lg:col-span-7 flex flex-col gap-2">
-                  <div className="flex-1 card rounded-xl p-2 sm:p-3 overflow-hidden flex flex-col">
-                    <div className="space-y-1.5">
+                  <div className="flex-1 card rounded-xl p-2 overflow-hidden flex flex-col">
+                    <div className="space-y-1">
                       <div className="flex gap-2">
-                        <div className="flex-1 flex flex-col items-center gap-0.5">
-                          <p className="text-[11px] text-[#10B981] font-semibold">Mint</p>
+                        <div className="flex-1 flex flex-col items-center gap-0">
+                          <p className="text-[10px] text-[#10B981] font-semibold">Mint</p>
                           <button 
                             onClick={() => { setInputToken('ETH'); setInputAmount(''); setEshareInput(''); setRageInput(''); }}
-                            className={`w-full py-2 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1 ${
+                            className={`w-full py-1.5 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1 ${
                               inputToken === 'ETH' 
                                 ? 'bg-[#FF6B35] text-white' 
                                 : 'bg-white/5 text-gray-400 hover:text-white border border-white/10'
@@ -2080,11 +2080,11 @@ export default function Dashboard() {
                             <Zap size={12} /> ETH
                           </button>
                         </div>
-                        <div className="flex-1 flex flex-col items-center gap-0.5">
-                          <p className="text-[11px] text-[#10B981] font-semibold">Mint</p>
+                        <div className="flex-1 flex flex-col items-center gap-0">
+                          <p className="text-[10px] text-[#10B981] font-semibold">Mint</p>
                           <button 
                             onClick={() => { setInputToken('ESHARE_RAGE'); setInputAmount(''); setEshareInput(''); setRageInput(''); }}
-                            className={`w-full py-2 rounded-lg text-xs font-medium transition-all ${
+                            className={`w-full py-1.5 rounded-lg text-xs font-medium transition-all ${
                               inputToken === 'ESHARE_RAGE' 
                                 ? 'bg-[#8B5CF6] text-white' 
                                 : 'bg-white/5 text-gray-400 hover:text-white border border-white/10'
@@ -2093,11 +2093,11 @@ export default function Dashboard() {
                             ESHARE + RAGE
                           </button>
                         </div>
-                        <div className="flex-1 flex flex-col items-center gap-0.5">
-                          <p className="text-[11px] text-[#A855F7] font-semibold">Redeem</p>
+                        <div className="flex-1 flex flex-col items-center gap-0">
+                          <p className="text-[10px] text-[#A855F7] font-semibold">Redeem</p>
                           <button 
                             onClick={() => { setInputToken('GGX'); setInputAmount(''); setEshareInput(''); setRageInput(''); }}
-                            className={`w-full py-2 rounded-lg text-xs font-medium transition-all ${
+                            className={`w-full py-1.5 rounded-lg text-xs font-medium transition-all ${
                               inputToken === 'GGX' 
                                 ? 'bg-[#3B82F6] text-white' 
                                 : 'bg-white/5 text-gray-400 hover:text-white border border-white/10'
@@ -2109,10 +2109,10 @@ export default function Dashboard() {
                       </div>
 
                       {/* Separator line under tabs */}
-                      <div className="mt-1 border-t border-white/10"></div>
+                      <div className="border-t border-white/10"></div>
                       
                       {/* Input Section — fixed min-height keeps layout stable across tab switches */}
-                      <div className="mt-1 min-h-[56px]">
+                      <div className="mt-0.5 min-h-[48px]">
                       {inputToken === 'ESHARE_RAGE' ? (
                         // Dual input for ESHARE + RAGE — stacked on mobile, row on desktop
                         <div className="flex flex-col sm:flex-row gap-2">
@@ -2271,7 +2271,7 @@ export default function Dashboard() {
                       </div>
 
                       {/* Output Preview - fixed min-height prevents layout shift on tab switch */}
-                      <div className="mt-1 min-h-[28px]">
+                      <div className="mt-0.5 min-h-[24px]">
                       {inputToken === 'GGX' ? (
                         // Redeem output
                         redeemOutput ? (
@@ -2364,25 +2364,25 @@ export default function Dashboard() {
                       
                       {/* All Balances */}
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 text-sm">
-                        <div className="relative bg-[#141416]/80 rounded-lg py-1.5 px-2 border border-[#FF6B35]/15">
+                        <div className="relative bg-[#141416]/80 rounded-lg py-1 px-2 border border-[#FF6B35]/15">
                           <a href={`https://app.uniswap.org/swap?inputCurrency=${CONTRACTS.USDC}&outputCurrency=${CONTRACTS.WETH}&chain=base`} target="_blank" rel="noopener noreferrer" className="absolute top-1 right-1.5 text-[9px] text-gray-400/60 hover:text-gray-300 flex items-center gap-0.5 transition-colors">Swap <ArrowUpRight size={8} /></a>
                           <p className="text-[11px] text-gray-400 text-center">ETH</p>
                           <p className="font-mono text-[11px] sm:text-[13px] text-center leading-tight">{ethBal ? parseFloat(formatUnits(ethBal.value, ethBal.decimals)).toFixed(4) : '0.0000'}</p>
                           <p className="text-[10px] text-[#10B981] text-center leading-tight">{ethBal && prices.ethPriceUsd > 0 ? `$${formatPrice(parseFloat(formatUnits(ethBal.value, ethBal.decimals)) * prices.ethPriceUsd)}` : '—'}</p>
                         </div>
-                        <div className="relative bg-[#141416]/80 rounded-lg py-1.5 px-2 border border-[#FF6B35]/15">
+                        <div className="relative bg-[#141416]/80 rounded-lg py-1 px-2 border border-[#FF6B35]/15">
                           <a href={`https://app.uniswap.org/swap?inputCurrency=ETH&outputCurrency=${CONTRACTS.ESHARE}&chain=base`} target="_blank" rel="noopener noreferrer" className="absolute top-1 right-1.5 text-[9px] text-[#8B5CF6]/60 hover:text-[#8B5CF6] flex items-center gap-0.5 transition-colors">Swap <ArrowUpRight size={8} /></a>
                           <p className="text-[11px] text-[#8B5CF6] text-center">ESHARE</p>
                           <p className="font-mono text-[11px] sm:text-[13px] text-center leading-tight">{formatNum(eshareBal)}</p>
                           <p className="text-[10px] text-[#10B981] text-center leading-tight">{eshareBal && prices.esharePrice > 0 && prices.ethPriceUsd > 0 ? `$${formatPrice(parseFloat(formatUnits(eshareBal, 18)) * prices.esharePrice * prices.ethPriceUsd)}` : '—'}</p>
                         </div>
-                        <div className="relative bg-[#141416]/80 rounded-lg py-1.5 px-2 border border-[#FF6B35]/15">
+                        <div className="relative bg-[#141416]/80 rounded-lg py-1 px-2 border border-[#FF6B35]/15">
                           <a href={`https://app.uniswap.org/swap?inputCurrency=ETH&outputCurrency=${CONTRACTS.RAGE}&chain=base`} target="_blank" rel="noopener noreferrer" className="absolute top-1 right-1.5 text-[9px] text-[#EF4444]/60 hover:text-[#EF4444] flex items-center gap-0.5 transition-colors">Swap <ArrowUpRight size={8} /></a>
                           <p className="text-[11px] text-[#EF4444] text-center">RAGE</p>
                           <p className="font-mono text-[11px] sm:text-[13px] text-center leading-tight">{formatNum(rageBal)}</p>
                           <p className="text-[10px] text-[#10B981] text-center leading-tight">{rageBal && prices.ragePrice > 0 ? `$${formatPrice(parseFloat(formatUnits(rageBal, 18)) * prices.ragePrice)}` : '—'}</p>
                         </div>
-                        <div className="relative bg-[#141416]/80 rounded-lg py-1.5 px-2 border border-[#FF6B35]/15">
+                        <div className="relative bg-[#141416]/80 rounded-lg py-1 px-2 border border-[#FF6B35]/15">
                           <a href={`https://app.uniswap.org/swap?inputCurrency=ETH&outputCurrency=${CONTRACTS.GGX}&chain=base`} target="_blank" rel="noopener noreferrer" className="absolute top-1 right-1.5 text-[9px] text-[#FF6B35]/60 hover:text-[#FF6B35] flex items-center gap-0.5 transition-colors">Swap <ArrowUpRight size={8} /></a>
                           <p className="text-[11px] text-[#FF6B35] text-center">ERAGE</p>
                           <p className="font-mono text-[11px] sm:text-[13px] text-center leading-tight">{formatNum(ggxBal)}</p>
@@ -2442,14 +2442,14 @@ export default function Dashboard() {
                           <button 
                             onClick={handleApproveEshare} 
                             disabled={isLoading || !eshareInput || parseFloat(eshareInput) === 0 || !needsEshareApproval}
-                            className={`w-1/2 py-3 rounded-lg text-sm font-semibold bg-[#8B5CF6] hover:bg-[#8B5CF6]/80 ${needsEshareApproval ? '' : 'opacity-30 cursor-not-allowed'}`}
+                            className={`w-1/2 py-2 rounded-lg text-sm font-semibold bg-[#8B5CF6] hover:bg-[#8B5CF6]/80 ${needsEshareApproval ? '' : 'opacity-30 cursor-not-allowed'}`}
                           >
                             Approve ESHARE
                           </button>
                           <button 
                             onClick={handleApproveRage} 
                             disabled={isLoading || !rageInput || parseFloat(rageInput) === 0 || !needsRageApproval}
-                            className={`w-1/2 py-3 rounded-lg text-sm font-semibold bg-[#8B5CF6] hover:bg-[#8B5CF6]/80 ${needsRageApproval ? '' : 'opacity-30 cursor-not-allowed'}`}
+                            className={`w-1/2 py-2 rounded-lg text-sm font-semibold bg-[#8B5CF6] hover:bg-[#8B5CF6]/80 ${needsRageApproval ? '' : 'opacity-30 cursor-not-allowed'}`}
                           >
                             Approve RAGE
                           </button>
@@ -2465,7 +2465,7 @@ export default function Dashboard() {
                               (!eshareInput || parseFloat(eshareInput) === 0) && 
                               (!rageInput || parseFloat(rageInput) === 0))
                           } 
-                          className={`w-full py-3 rounded-lg text-sm font-semibold disabled:opacity-50 ${
+                          className={`w-full py-2 rounded-lg text-sm font-semibold disabled:opacity-50 ${
                             inputToken === 'GGX'
                               ? 'bg-[#3B82F6] hover:bg-[#3B82F6]/80'
                               : 'btn-primary'
@@ -2488,7 +2488,7 @@ export default function Dashboard() {
                           <UniswapWidget ggxAddress={CONTRACTS.GGX} />
                         </div>
                         <div className="shrink-0 flex items-center justify-center overflow-hidden">
-                          <img src="/ERAGE-logo.webp" className="w-16 h-16 sm:w-20 sm:h-20 lg:w-36 lg:h-36 object-contain opacity-60" alt="ERAGE" />
+                          <img src="/ERAGE-logo.webp" className="w-14 h-14 sm:w-18 sm:h-18 lg:w-28 lg:h-28 object-contain opacity-60" alt="ERAGE" />
                         </div>
                       </div>
                       {/* Links row — mt-auto sticks to card bottom */}
