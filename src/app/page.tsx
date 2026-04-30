@@ -676,7 +676,7 @@ function RatioChart({
 // ============ SWAP WIDGET ============
 function UniswapWidget({ ggxAddress }: { ggxAddress: string }) {
   return (
-    <div style={{ width: '100%', height: '100%', minHeight: '320px', overflow: 'hidden', borderRadius: '12px', position: 'relative' }}>
+    <div style={{ width: '100%', height: '100%', minHeight: '240px', overflow: 'hidden', borderRadius: '12px', position: 'relative' }}>
       <iframe
         src={`https://switch.win/widget?network=base&background_color=0a0a0b&font_color=ffffff&secondary_font_color=6b7280&border_color=FF6B35&backdrop_color=transparent&from=0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee&to=${ggxAddress}`}
         allow="clipboard-read; clipboard-write"
@@ -752,6 +752,7 @@ export default function Dashboard() {
   const [newRageBurnTax, setNewRageBurnTax] = useState('')
   const [rescueToken, setRescueToken] = useState('')
   const [rescueAmount, setRescueAmount] = useState('')
+  const [burnErageAmount, setBurnErageAmount] = useState('')
   
   // Chart history — stored in separate hook for persistence across page.tsx updates
   const {
@@ -1672,7 +1673,18 @@ export default function Dashboard() {
     })
   }
   
-  // v5: GGX emergency drain is a 3-step timelocked flow
+  // Burn ERAGE handler — admin can burn ERAGE from their own balance
+  const handleBurnERAGE = () => {
+    if (!burnErageAmount || parseFloat(burnErageAmount) <= 0) return
+    writeContract({
+      address: CONTRACTS.GGX,
+      abi: GGX_ABI,
+      functionName: 'burn',
+      args: [parseUnits(burnErageAmount, 18)]
+    })
+  }
+  
+  // v5: ERAGE emergency drain is a 3-step timelocked flow
   const handleInitiateEmergencyDrain = () => {
     if (!confirm('Start 48-hour emergency drain countdown?\n\nUsers can still mint/redeem during the window.\nYou must come back after 48h to execute.')) return
     writeContract({ address: CONTRACTS.GGX, abi: GGX_ABI, functionName: 'initiateEmergencyDrain', args: [] })
@@ -1684,13 +1696,13 @@ export default function Dashboard() {
   }
 
   const handleExecuteEmergencyDrain = () => {
-    if (!confirm('Execute drain NOW?\n\nThis pauses the contract permanently and sends ALL ESHARE, RAGE, and GGX to the owner wallet.\nContract becomes unusable after this.')) return
+    if (!confirm('Execute drain NOW?\n\nThis pauses the contract permanently and sends ALL ESHARE, RAGE, and ERAGE to the owner wallet.\nContract becomes unusable after this.')) return
     writeContract({ address: CONTRACTS.GGX, abi: GGX_ABI, functionName: 'executeEmergencyDrain', args: [] })
   }
 
-  // Zap emergencyWithdraw (ESHARE + RAGE + GGX) and rescueETH
+  // Zap emergencyWithdraw (ESHARE + RAGE + ERAGE) and rescueETH
   const handleZapEmergencyWithdraw = () => {
-    if (!confirm('Withdraw all ESHARE, RAGE, and GGX from the Zap contract to owner?')) return
+    if (!confirm('Withdraw all ESHARE, RAGE, and ERAGE from the Zap contract to owner?')) return
     writeContract({ address: CONTRACTS.GGXZap, abi: ZAP_ABI, functionName: 'emergencyWithdraw', args: [] })
   }
 
@@ -1768,7 +1780,7 @@ export default function Dashboard() {
         </header>
         
         {/* Main Content */}
-        <main className="flex-1 max-w-7xl mx-auto w-full px-2 sm:px-4 py-2 sm:py-3">
+        <main className="flex-1 max-w-7xl mx-auto w-full px-2 sm:px-3 py-1.5 sm:py-2">
           {!isConnected ? (
             <div className="flex flex-col items-center justify-center h-[calc(100vh-200px)] animate-fade-in-up">
               <img src="/ERAGE-logo.webp" className="w-48 h-48 rounded-3xl object-cover shadow-2xl shadow-[#FF6B35]/30 animate-pulse-glow" alt="ERAGE" />
@@ -1779,13 +1791,13 @@ export default function Dashboard() {
               </button>
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-2">
               {/* Main Grid */}
-              <div className="grid grid-cols-12 gap-3 overflow-hidden" style={{ height: 'calc(100vh - 56px)' }}>
+              <div className="grid grid-cols-12 gap-2 overflow-hidden" style={{ height: 'calc(100vh - 48px)' }}>
                 {/* Left Column */}
-                <div className="col-span-12 lg:col-span-5 flex flex-col gap-3">
+                <div className="col-span-12 lg:col-span-5 flex flex-col gap-2">
                   {/* Top Row - 3 columns on desktop, 1 col on mobile */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2" style={{ minHeight: '100px' }}>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2" style={{ minHeight: '80px' }}>
                     {/* Backing Ratio */}
                     <div className="stat-card rounded-xl bg-gradient-to-br from-[#FF6B35]/15 to-[#1a1a1c]/90 border border-white/6 p-2 flex flex-col transition-all duration-300 hover:brightness-110 hover:border-white/12">
                       <div>
@@ -1899,7 +1911,7 @@ export default function Dashboard() {
                         </div>
                         
                         {/* Burnt Section */}
-                        <div className="pt-2 border-t border-white/10">
+                        <div className="pt-1 border-t border-white/10">
                           <p className="text-[13px] text-gray-400 text-center mb-1 font-semibold">🔥 Burnt 🔥</p>
                           <div className="flex flex-col gap-0.5 text-xs">
                             <div className="flex items-center gap-1">
@@ -1919,7 +1931,7 @@ export default function Dashboard() {
                         
                         {/* Protocol TVL at bottom - single line */}
                         {backingBalances && prices.ethPriceUsd > 0 && (
-                          <div className="mt-auto pt-2 border-t border-white/10">
+                          <div className="mt-auto pt-1 border-t border-white/10">
                             <p className="text-[12px] font-semibold text-[#FFD700] text-center">
                               Protocol TVL = ${formatPrice((
                                 parseFloat(formatUnits(backingBalances[0], 18)) * prices.esharePrice * prices.ethPriceUsd +
@@ -1964,12 +1976,12 @@ export default function Dashboard() {
                         ))}
                       </div>
                     </div>
-                    <div className="flex-1 min-h-[120px]">
+                    <div className="flex-1 min-h-[80px]">
                       <RatioChart history={backingRatioHistory} priceEfficiencyHistory={priceEfficiencyHistory} timeRange={timeRange} currentRatio={priceEfficiencyRatio} />
                     </div>
                     {/* Strategy Guide */}
-                    <div className="mt-1.5 pt-1.5 border-t border-white/5 text-[10px] text-gray-400">
-                      <p className="text-[11px] text-gray-300 font-semibold mb-1 text-center">Arbitrage Strategies</p>
+                    <div className="mt-1 pt-1 border-t border-white/5 text-[10px] text-gray-400">
+                      <p className="text-[11px] text-gray-300 font-semibold mb-0.5 text-center">Arbitrage Strategies</p>
                       <div className="flex flex-col gap-0.5">
                         <div className="flex items-start gap-1.5"><span className="inline-block w-2 h-2 rounded-full bg-[#10B981] mt-0.5 shrink-0"></span><span className="text-[#10B981]">Green Zone Efficiency</span><span className="text-gray-400">: MINT ERAGE (cheaper) → Sell on UniSwap (capture premium)</span></div>
                         <div className="flex items-start gap-1.5"><span className="inline-block w-2 h-2 rounded-full bg-[#3B82F6] mt-0.5 shrink-0"></span><span className="text-[#3B82F6]">Neutral Zone Efficiency</span><span className="text-gray-400">: MINT ERAGE or Hold</span></div>
@@ -1980,10 +1992,9 @@ export default function Dashboard() {
                 </div>
 
                 {/* Right Column - Unified Action Box */}
-                <div className="col-span-12 lg:col-span-7 flex flex-col gap-3">
+                <div className="col-span-12 lg:col-span-7 flex flex-col gap-2">
                   <div className="flex-1 card rounded-xl p-2 sm:p-3 overflow-hidden flex flex-col">
-                    <div className="space-y-2">
-                      {/* Token Selector Buttons with Mint/Redeem labels */}
+                    <div className="space-y-1.5">
                       <div className="flex gap-2">
                         <div className="flex-1 flex flex-col items-center gap-0.5">
                           <p className="text-[11px] text-[#10B981] font-semibold">Mint</p>
@@ -2027,10 +2038,10 @@ export default function Dashboard() {
                       </div>
 
                       {/* Separator line under tabs */}
-                      <div className="mt-2 border-t border-white/10"></div>
+                      <div className="mt-1 border-t border-white/10"></div>
                       
                       {/* Input Section — fixed min-height keeps layout stable across tab switches */}
-                      <div className="mt-2 min-h-[56px]">
+                      <div className="mt-1 min-h-[56px]">
                       {inputToken === 'ESHARE_RAGE' ? (
                         // Dual input for ESHARE + RAGE — stacked on mobile, row on desktop
                         <div className="flex flex-col sm:flex-row gap-2">
@@ -2400,16 +2411,16 @@ export default function Dashboard() {
                     </div>
 
                     {/* Line separator */}
-                    <div className="border-t border-white/10 my-1.5" />
+                    <div className="border-t border-white/10 my-1" />
 
                     {/* Widget + Logo side by side — flex-1 fills remaining card height, pushes links to bottom */}
-                    <div className="flex-1 flex flex-col justify-between gap-2">
+                    <div className="flex-1 flex flex-col justify-between gap-1.5">
                       <div className="flex-1 flex gap-3 items-stretch">
                         <div className="flex-1" style={{ maxWidth: 'calc(100% - 80px)' }}>
                           <UniswapWidget ggxAddress={CONTRACTS.GGX} />
                         </div>
                         <div className="shrink-0 flex items-center justify-center overflow-hidden">
-                          <img src="/ERAGE-logo.webp" className="w-20 h-20 sm:w-28 sm:h-28 lg:w-52 lg:h-52 object-contain opacity-60" alt="ERAGE" />
+                          <img src="/ERAGE-logo.webp" className="w-16 h-16 sm:w-20 sm:h-20 lg:w-36 lg:h-36 object-contain opacity-60" alt="ERAGE" />
                         </div>
                       </div>
                       {/* Links row — mt-auto sticks to card bottom */}
@@ -2447,7 +2458,7 @@ export default function Dashboard() {
                     <div className="flex gap-1 mb-3">
                       {(['ggx', 'zap', 'rescue'] as const).map((t) => (
                         <button key={t} onClick={() => setAdminTab(t)} className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all ${adminTab === t ? 'bg-[#F59E0B]/20 text-[#F59E0B] border border-[#F59E0B]/30' : 'text-gray-500 hover:text-white bg-white/5'}`}>
-                          {t === 'ggx' ? 'GGX Controls' : t === 'zap' ? 'Zap Controls' : 'Emergency'}
+                          {t === 'ggx' ? 'ERAGE Controls' : t === 'zap' ? 'Zap Controls' : 'Emergency'}
                         </button>
                       ))}
                     </div>
@@ -2465,9 +2476,16 @@ export default function Dashboard() {
                         </div>
                         
                         <div className="bg-white/5 rounded-lg p-2 space-y-2">
-                          <p className="text-[10px] text-gray-400 uppercase">GGX Per Pair</p>
+                          <p className="text-[10px] text-gray-400 uppercase">ERAGE Per Pair</p>
                           <input type="number" value={newRatio} onChange={(e) => setNewRatio(e.target.value)} placeholder={ggxPerPair ? formatRatio(ggxPerPair) : '1.0'} className="w-full bg-white/5 border border-white/10 rounded px-2 py-1 text-xs" />
                           <button onClick={handleSetRatio} disabled={!newRatio || isLoading} className="w-full py-1 text-[10px] bg-[#F59E0B]/20 text-[#F59E0B] rounded border border-[#F59E0B]/30 disabled:opacity-50">Update</button>
+                        </div>
+                        
+                        <div className="bg-white/5 rounded-lg p-2 space-y-2">
+                          <p className="text-[10px] text-[#F97316] uppercase">Burn ERAGE</p>
+                          <input type="number" value={burnErageAmount} onChange={(e) => setBurnErageAmount(e.target.value)} placeholder="Amount to burn" className="w-full bg-white/5 border border-white/10 rounded px-2 py-1 text-xs" />
+                          <button onClick={handleBurnERAGE} disabled={!burnErageAmount || parseFloat(burnErageAmount) <= 0 || isLoading} className="w-full py-1 text-[10px] bg-[#F97316]/20 text-[#F97316] rounded border border-[#F97316]/30 disabled:opacity-50 flex items-center justify-center gap-1"><Flame size={10} /> Burn</button>
+                          <p className="text-[9px] text-gray-500">Your balance: {ggxBal ? formatNum(ggxBal) : '—'} ERAGE</p>
                         </div>
                         
                         <div className="bg-white/5 rounded-lg p-2 space-y-2">
@@ -2546,17 +2564,17 @@ export default function Dashboard() {
                               <p className="text-gray-400">{backingBalances && prices.ragePrice > 0 ? `$${formatPrice(parseFloat(formatUnits(backingBalances[1], 18)) * prices.ragePrice)}` : '—'}</p>
                             </div>
                             <div className="bg-[#3B82F6]/10 rounded p-1.5">
-                              <p className="text-[#3B82F6] font-semibold">GGX-ETH Pool</p>
+                              <p className="text-[#3B82F6] font-semibold">ERAGE-ETH Pool</p>
                               <p className="text-white">{ggxPoolWethBal ? formatNum(ggxPoolWethBal, 18) : '—'} ETH</p>
                               <p className="text-gray-400">{ggxPoolWethBal && prices.ethPriceUsd > 0 ? `$${formatPrice(parseFloat(formatUnits(ggxPoolWethBal, 18)) * prices.ethPriceUsd)}` : '—'}</p>
                             </div>
                             <div className="bg-[#EF4444]/10 rounded p-1.5">
-                              <p className="text-[#EF4444] font-semibold">GGX-RAGE Pool</p>
+                              <p className="text-[#EF4444] font-semibold">ERAGE-RAGE Pool</p>
                               <p className="text-white">{ggxRagePoolRageBal ? formatNum(ggxRagePoolRageBal, 18) : '—'} RA</p>
                               <p className="text-gray-400">{ggxRagePoolRageBal && prices.ragePrice > 0 ? `$${formatPrice(parseFloat(formatUnits(ggxRagePoolRageBal, 18)) * prices.ragePrice)}` : '—'}</p>
                             </div>
                             <div className="bg-[#8B5CF6]/10 rounded p-1.5">
-                              <p className="text-[#8B5CF6] font-semibold">GGX-ESHARE Pool</p>
+                              <p className="text-[#8B5CF6] font-semibold">ERAGE-ESHARE Pool</p>
                               <p className="text-white">{ggxEsharePoolEshareBal ? formatNum(ggxEsharePoolEshareBal, 18) : '—'} ES</p>
                               <p className="text-gray-400">{ggxEsharePoolEshareBal && prices.esharePrice > 0 ? `$${formatPrice(parseFloat(formatUnits(ggxEsharePoolEshareBal, 18)) * prices.esharePrice * prices.ethPriceUsd)}` : '—'}</p>
                             </div>
@@ -2606,7 +2624,7 @@ export default function Dashboard() {
                           )}
                         </div>
                         <div className="bg-white/5 rounded-lg p-2 space-y-1">
-                          <p className="text-[10px] text-gray-400 uppercase">GGX Address</p>
+                          <p className="text-[10px] text-gray-400 uppercase">ERAGE Address</p>
                           <p className="text-[10px] font-mono text-white break-all">{zapGgx ? `${zapGgx.slice(0, 6)}...${zapGgx.slice(-4)}` : '—'}</p>
                           <p className="text-[9px] text-gray-500 mt-1">Expected: {CONTRACTS.GGX.slice(0, 6)}...{CONTRACTS.GGX.slice(-4)}</p>
                           {zapGgx && zapGgx.toLowerCase() !== CONTRACTS.GGX.toLowerCase() && (
@@ -2632,16 +2650,16 @@ export default function Dashboard() {
                     
                     {adminTab === 'rescue' && (
                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
-                        {/* GGX Contract — v5 timelocked emergency drain + rescueToken */}
+                        {/* ERAGE Contract — v5 timelocked emergency drain + rescueToken */}
                         <div className="bg-[#EF4444]/5 border border-[#EF4444]/20 rounded-lg p-3 space-y-2">
                           <div className="flex items-center gap-2">
                             <AlertTriangle size={14} className="text-[#EF4444]" />
-                            <p className="text-xs font-semibold text-[#EF4444]">GGX Contract Emergency</p>
+                            <p className="text-xs font-semibold text-[#EF4444]">ERAGE Contract Emergency</p>
                           </div>
 
                           {/* Rescue non-backing token */}
                           <div className="space-y-1.5">
-                            <p className="text-[10px] text-gray-400 uppercase tracking-wider">Rescue stuck token (not ES/RA/GGX)</p>
+                            <p className="text-[10px] text-gray-400 uppercase tracking-wider">Rescue stuck token (not ES/RA/ERAGE)</p>
                             <input type="text" value={rescueToken} onChange={(e) => setRescueToken(e.target.value)} placeholder="Token Address" className="w-full bg-white/5 border border-white/10 rounded px-2 py-1 text-xs" />
                             <input type="number" value={rescueAmount} onChange={(e) => setRescueAmount(e.target.value)} placeholder="Amount (wei)" className="w-full bg-white/5 border border-white/10 rounded px-2 py-1 text-xs" />
                             <button onClick={() => handleRescueToken('ggx')} disabled={!rescueToken || !rescueAmount || isLoading} className="w-full py-2 text-xs bg-[#EF4444]/20 text-[#EF4444] rounded border border-[#EF4444]/30 disabled:opacity-50 flex items-center justify-center gap-1"><Trash2 size={12} /> Rescue Token</button>
@@ -2704,7 +2722,7 @@ export default function Dashboard() {
                                   Number(emergencyDrainExecutableAt as bigint) > Math.floor(Date.now() / 1000)
                                 }
                                 className="flex-1 py-2 text-xs bg-[#EF4444]/20 text-[#EF4444] rounded border border-[#EF4444]/30 disabled:opacity-30 flex items-center justify-center gap-1"
-                                title="Execute after 48h. Pauses contract + drains ES/RA/GGX to owner."
+                                title="Execute after 48h. Pauses contract + drains ES/RA/ERAGE to owner."
                               >
                                 <AlertTriangle size={11} /> Execute
                               </button>
@@ -2715,21 +2733,21 @@ export default function Dashboard() {
                           </div>
                         </div>
 
-                        {/* Zap Contract — emergencyWithdraw (ES+RA+GGX) + rescueETH + rescueToken */}
+                        {/* Zap Contract — emergencyWithdraw (ES+RA+ERAGE) + rescueETH + rescueToken */}
                         <div className="bg-[#EF4444]/5 border border-[#EF4444]/20 rounded-lg p-3 space-y-2">
                           <div className="flex items-center gap-2">
                             <AlertTriangle size={14} className="text-[#EF4444]" />
-                            <p className="text-xs font-semibold text-[#EF4444]">GGXZap Emergency</p>
+                            <p className="text-xs font-semibold text-[#EF4444]">ERAGE Zap Emergency</p>
                           </div>
                           <div className="space-y-1.5">
-                            <p className="text-[10px] text-gray-400 uppercase tracking-wider">Rescue stuck token (not ES/RA/GGX)</p>
+                            <p className="text-[10px] text-gray-400 uppercase tracking-wider">Rescue stuck token (not ES/RA/ERAGE)</p>
                             <input type="text" value={rescueToken} onChange={(e) => setRescueToken(e.target.value)} placeholder="Token Address" className="w-full bg-white/5 border border-white/10 rounded px-2 py-1 text-xs" />
                             <input type="number" value={rescueAmount} onChange={(e) => setRescueAmount(e.target.value)} placeholder="Amount (wei)" className="w-full bg-white/5 border border-white/10 rounded px-2 py-1 text-xs" />
                             <button onClick={() => handleRescueToken('zap')} disabled={!rescueToken || !rescueAmount || isLoading} className="w-full py-2 text-xs bg-[#EF4444]/20 text-[#EF4444] rounded border border-[#EF4444]/30 disabled:opacity-50 flex items-center justify-center gap-1"><Trash2 size={12} /> Rescue Token</button>
                           </div>
                           <div className="pt-2 border-t border-[#EF4444]/20 flex gap-1">
-                            <button onClick={handleZapEmergencyWithdraw} disabled={isLoading} className="flex-1 py-2 text-xs bg-[#EF4444]/20 text-[#EF4444] rounded border border-[#EF4444]/30 disabled:opacity-50 flex items-center justify-center gap-1" title="Sweep all ES+RA+GGX held by the Zap to owner (no timelock — Zap should never hold meaningful balances).">
-                              <AlertTriangle size={11} /> Withdraw ES/RA/GGX
+                            <button onClick={handleZapEmergencyWithdraw} disabled={isLoading} className="flex-1 py-2 text-xs bg-[#EF4444]/20 text-[#EF4444] rounded border border-[#EF4444]/30 disabled:opacity-50 flex items-center justify-center gap-1" title="Sweep all ES+RA+ERAGE held by the Zap to owner (no timelock — Zap should never hold meaningful balances).">
+                              <AlertTriangle size={11} /> Withdraw ES/RA/ERAGE
                             </button>
                             <button onClick={handleZapRescueETH} disabled={isLoading} className="flex-1 py-2 text-xs bg-[#EF4444]/20 text-[#EF4444] rounded border border-[#EF4444]/30 disabled:opacity-50 flex items-center justify-center gap-1">
                               <DollarSign size={12} /> Rescue ETH
