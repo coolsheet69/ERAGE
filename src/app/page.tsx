@@ -13,7 +13,7 @@
 //   ])
 // =============================================
 
-import { useAccount, useConnect, useDisconnect, useReadContract, useWriteContract, useWaitForTransactionReceipt, useSwitchChain, useBalance, useWatchContractEvent } from 'wagmi'
+import { useAccount, useConnect, useDisconnect, useReadContract, useWriteContract, useWaitForTransactionReceipt, useSwitchChain, useBalance, useWatchContractEvent, usePublicClient } from 'wagmi'
 import { useQueryClient } from '@tanstack/react-query'
 import { parseUnits, formatUnits, parseAbiItem } from 'viem'
 import { base } from 'wagmi/chains'
@@ -772,8 +772,15 @@ export default function Dashboard() {
   const [burntAmounts, setBurntAmounts] = useState<{ eshare: bigint; rage: bigint }>({ eshare: 0n, rage: 0n })
   
   // ERAGE burn tracking — watch Transfer events to address(0) on the ERAGE contract
-  // The contract's burn() function doesn't track totalErageBurned, so we monitor on-chain events
-  const [erageBurnt, setErageBurnt] = useState<bigint>(0n)
+  // The contract's burn() function doesn't track totalErageBurned, so we monitor on-chain events.
+  // We initialize from localStorage cache instantly, then fetch full history from chain.
+  const [erageBurnt, setErageBurnt] = useState<bigint>(() => {
+    if (typeof window === 'undefined') return 0n
+    try {
+      const cached = localStorage.getItem('erageBurnt')
+      return cached ? BigInt(cached) : 0n
+    } catch { return 0n }
+  })
   
   // ============ CONTRACT READS ============
   const { data: ggxBal } = useReadContract({ address: CONTRACTS.GGX, abi: ERC20_ABI, functionName: 'balanceOf', args: address ? [address] : undefined, query: { enabled: !!address } })
@@ -925,7 +932,67 @@ export default function Dashboard() {
   // The contract's burn() function doesn't increment a totalErageBurned counter,
   // so we watch for ERC20 Transfer events to address(0) on the ERAGE contract.
   // This captures voluntary burns via burn() AND ERAGE destroyed during redeem().
+  //
+  // Persistence strategy:
+  // 1. Instant load from localStorage cache (survives page reuploads)
+  // 2. On mount, fetch full historical Transfer(to=0) logs from chain → authoritative
+  // 3. useWatchContractEvent catches new burns in real-time
+  //
+  // Every user gets accurate numbers regardless of localStorage:
+  // - Cached value shows instantly (from their own localStorage)
+  // - Chain query overwrites with the true on-chain total within seconds
+  // - New users with no cache: see "—" briefly, then accurate number once getLogs returns
   const ZERO_ADDR = '0x0000000000000000000000000000000000000000' as `0x${string}`
+  const publicClient = usePublicClient()
+  
+  // ERAGE first burn block on Base — narrows the query range for speed & reliability
+  // First ERAGE burn occurred at block 45386361, no need to scan earlier blocks
+  const ERAGE_DEPLOY_BLOCK = 45386361n
+
+  // Fetch historical burn events on mount — chunked to avoid RPC limits
+  useEffect(() => {
+    if (!publicClient) return
+    const fetchHistoricalBurns = async () => {
+      try {
+        const latestBlock = await publicClient.getBlockNumber()
+        const CHUNK = 10000n
+        let total = 0n
+        
+        for (let from = ERAGE_DEPLOY_BLOCK; from <= latestBlock; from += CHUNK) {
+          const to = from + CHUNK > latestBlock ? latestBlock : from + CHUNK
+          const logs = await publicClient.getLogs({
+            address: CONTRACTS.GGX,
+            event: {
+              type: 'event',
+              name: 'Transfer',
+              inputs: [
+                { name: 'from', type: 'address', indexed: true },
+                { name: 'to', type: 'address', indexed: true },
+                { name: 'value', type: 'uint256', indexed: false },
+              ],
+            },
+            args: { to: ZERO_ADDR },
+            fromBlock: from,
+            toBlock: to,
+          })
+          for (const log of logs) {
+            const value = log.args.value ?? 0n
+            if (value > 0n) total += value
+          }
+        }
+        setErageBurnt(total)
+        localStorage.setItem('erageBurnt', total.toString())
+      } catch (err) {
+        console.warn('Failed to fetch historical ERAGE burn logs:', err)
+      }
+    }
+    fetchHistoricalBurns()
+  }, [publicClient])
+
+  // Persist to localStorage on every change
+  useEffect(() => {
+    try { localStorage.setItem('erageBurnt', erageBurnt.toString()) } catch {}
+  }, [erageBurnt])
   
   useWatchContractEvent({
     address: CONTRACTS.GGX,
@@ -2415,7 +2482,7 @@ export default function Dashboard() {
                     </div>
 
                     {/* Line separator */}
-                    <div className="border-t border-white/10 my-1" />
+                    <div className="border-t border-white/10 my-0" />
 
                     {/* Widget + Logo side by side — flex-1 fills remaining card height, pushes links to bottom */}
                     <div className="flex-1 flex flex-col justify-between gap-1.5">
