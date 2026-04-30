@@ -698,7 +698,7 @@ function UniswapWidget({ ggxAddress }: { ggxAddress: string }) {
         style={{
           border: 'none',
           width: '125%',
-          height: '640px',
+          height: '760px',
           transform: 'scale(0.80)',
           transformOrigin: 'top left',
           borderRadius: '12px',
@@ -2081,8 +2081,8 @@ export default function Dashboard() {
                 </div>
 
                 {/* Right Column - Unified Action Box */}
-                <div className="col-span-12 lg:col-span-7 flex flex-col gap-2 lg:min-h-0 lg:overflow-hidden">
-                  <div className="lg:flex-1 card rounded-xl p-2 lg:overflow-hidden flex flex-col lg:min-h-0">
+                <div className="col-span-12 lg:col-span-7 flex flex-col gap-2 lg:min-h-0 lg:overflow-y-auto">
+                  <div className="lg:flex-1 card rounded-xl p-2 flex flex-col lg:min-h-0">
                     <div className="shrink-0 space-y-1">
                       <div className="flex gap-2">
                         <div className="flex-1 flex flex-col items-center gap-0.5">
@@ -2499,18 +2499,18 @@ export default function Dashboard() {
                       </div>
                     </div>
 
-                    {/* Widget + Logo side by side — fixed height on mobile so no double-scroll, flex-1 on desktop */}
-                    <div className="flex flex-col border-t border-white/10 pt-1.5 mt-1" style={{ height: '580px' }}>
-                      <div className="flex-1 flex gap-2 items-stretch">
-                        <div className="flex-1 min-w-0">
+                    {/* Widget + Logo side by side — tall min-height on mobile (natural scroll), flex-1 on desktop (viewport-locked) */}
+                    <div className="flex flex-col border-t border-white/10 pt-1.5 mt-1 flex-1 min-h-[620px] lg:min-h-0">
+                      <div className="flex-1 flex gap-2 items-stretch min-h-0">
+                        <div className="flex-1 min-w-0 min-h-0">
                           <UniswapWidget ggxAddress={CONTRACTS.GGX} />
                         </div>
                         <div className="hidden sm:flex shrink-0 items-center justify-center">
                           <img src="/ERAGE-logo.webp" className="w-16 h-16 sm:w-20 sm:h-20 lg:w-48 lg:h-48 object-contain opacity-60" alt="ERAGE" />
                         </div>
                       </div>
-                      {/* Links row */}
-                      <div className="flex items-center justify-end text-[9px] text-gray-500 pt-1 border-t border-white/5">
+                      {/* Links row — always visible, never clipped */}
+                      <div className="shrink-0 flex items-center justify-end text-[9px] text-gray-500 pt-1 border-t border-white/5">
                         <div className="flex items-center gap-2.5">
                           <a href="https://t.me/+ZDuHXsPY1Jg3MmU5" target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 hover:text-white transition-colors"><MessageCircle size={9} /> Telegram</a>
                           <a href="/ERAGE_Whitepaper_v2.pdf" target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 hover:text-white transition-colors"><FileText size={9} /> Docs</a>
