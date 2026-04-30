@@ -676,14 +676,14 @@ function RatioChart({
 // ============ SWAP WIDGET ============
 function UniswapWidget({ ggxAddress }: { ggxAddress: string }) {
   return (
-    <div style={{ width: '100%', overflow: 'hidden', borderRadius: '12px', position: 'relative' }}>
+    <div style={{ width: '100%', height: '100%', overflow: 'hidden', borderRadius: '12px', position: 'relative' }}>
       <iframe
         src={`https://switch.win/widget?network=base&background_color=0a0a0b&font_color=ffffff&secondary_font_color=6b7280&border_color=FF6B35&backdrop_color=transparent&from=0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee&to=${ggxAddress}`}
         allow="clipboard-read; clipboard-write"
         style={{
           border: 'none',
           width: '150%',
-          height: '450px',
+          height: '150%',
           transform: 'scale(0.667)',
           transformOrigin: 'top left',
           borderRadius: '12px',
@@ -2481,18 +2481,18 @@ export default function Dashboard() {
                       </div>
                     </div>
 
-                    {/* Widget + Logo side by side */}
-                    <div className="flex flex-col border-t border-white/10 pt-1.5 mt-1">
-                      <div className="flex gap-2 items-start">
-                        <div className="flex-1 min-w-0">
+                    {/* Widget + Logo side by side — flex-1 fills remaining card space */}
+                    <div className="flex-1 flex flex-col border-t border-white/10 pt-1.5 mt-1 min-h-0">
+                      <div className="flex-1 flex gap-2 items-stretch min-h-0">
+                        <div className="flex-1 min-w-0 min-h-0">
                           <UniswapWidget ggxAddress={CONTRACTS.GGX} />
                         </div>
-                        <div className="shrink-0 flex items-start justify-center overflow-hidden">
+                        <div className="shrink-0 flex items-center justify-center overflow-hidden">
                           <img src="/ERAGE-logo.webp" className="w-16 h-16 sm:w-20 sm:h-20 lg:w-36 lg:h-36 object-contain opacity-60" alt="ERAGE" />
                         </div>
                       </div>
                       {/* Links row */}
-                      <div className="mt-1 flex items-center justify-end text-[9px] text-gray-500 pt-1 border-t border-white/5">
+                      <div className="flex items-center justify-end text-[9px] text-gray-500 pt-1 border-t border-white/5">
                         <div className="flex items-center gap-2.5">
                           <a href="https://t.me/" target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 hover:text-white transition-colors"><MessageCircle size={9} /> Telegram</a>
                           <a href="/ERAGE_Whitepaper_v2.pdf" target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 hover:text-white transition-colors"><FileText size={9} /> Docs</a>
