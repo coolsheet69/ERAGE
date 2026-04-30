@@ -682,9 +682,9 @@ function UniswapWidget({ ggxAddress }: { ggxAddress: string }) {
         allow="clipboard-read; clipboard-write"
         style={{
           border: 'none',
-          width: '133%',
-          height: '133%',
-          transform: 'scale(0.75)',
+          width: '125%',
+          height: '125%',
+          transform: 'scale(0.80)',
           transformOrigin: 'top left',
           borderRadius: '12px',
         }}
@@ -2488,7 +2488,7 @@ export default function Dashboard() {
                           <UniswapWidget ggxAddress={CONTRACTS.GGX} />
                         </div>
                         <div className="shrink-0 flex items-center justify-center overflow-hidden">
-                          <img src="/ERAGE-logo.webp" className="w-16 h-16 sm:w-20 sm:h-20 lg:w-24 lg:h-24 object-contain opacity-60" alt="ERAGE" />
+                          <img src="/ERAGE-logo.webp" className="w-16 h-16 sm:w-20 sm:h-20 lg:w-44 lg:h-44 object-contain opacity-60" alt="ERAGE" />
                         </div>
                       </div>
                       {/* Links row */}
