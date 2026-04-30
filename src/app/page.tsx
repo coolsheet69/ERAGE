@@ -13,9 +13,9 @@
 //   ])
 // =============================================
 
-import { useAccount, useConnect, useDisconnect, useReadContract, useWriteContract, useWaitForTransactionReceipt, useSwitchChain, useBalance } from 'wagmi'
+import { useAccount, useConnect, useDisconnect, useReadContract, useWriteContract, useWaitForTransactionReceipt, useSwitchChain, useBalance, useWatchContractEvent } from 'wagmi'
 import { useQueryClient } from '@tanstack/react-query'
-import { parseUnits, formatUnits } from 'viem'
+import { parseUnits, formatUnits, parseAbiItem } from 'viem'
 import { base } from 'wagmi/chains'
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useChartHistory } from './useChartHistory'
@@ -124,6 +124,7 @@ const ERC20_ABI = [
   { name: 'totalSupply', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
   { name: 'approve', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'spender', type: 'address' }, { name: 'amount', type: 'uint256' }], outputs: [{ type: 'bool' }] },
   { name: 'allowance', type: 'function', stateMutability: 'view', inputs: [{ name: 'owner', type: 'address' }, { name: 'spender', type: 'address' }], outputs: [{ type: 'uint256' }] },
+  { name: 'Transfer', type: 'event', inputs: [{ name: 'from', type: 'address', indexed: true }, { name: 'to', type: 'address', indexed: true }, { name: 'value', type: 'uint256', indexed: false }] },
 ] as const
 
 const PAIR_ABI = [
@@ -333,10 +334,10 @@ function RatioChart({
       const chartHeight = height - padding.top - padding.bottom
 
       // ── Zone thresholds ──
-      const GREEN_ZONE = 1.025
+      const GREEN_ZONE = 1.035
       const RED_ZONE = 0.975
 
-      // ── Green Zone (top): above 1.025 — "Greenzone Efficiency Strategy" ──
+      // ── Green Zone (top): above 1.035 — "Greenzone Efficiency Strategy" ──
       if (filteredPriceEfficiency.length > 0 && maxRatio > GREEN_ZONE) {
         const greenY = padding.top + chartHeight - ((GREEN_ZONE - minRatio) / ratioRange) * chartHeight
         const topY = padding.top
@@ -355,7 +356,7 @@ function RatioChart({
         }
       }
 
-      // ── Blue Neutral Zone: between 0.975 and 1.025 ──
+      // ── Blue Neutral Zone: between 0.975 and 1.035 ──
       if (filteredPriceEfficiency.length > 0) {
         const upperY = padding.top + chartHeight - ((GREEN_ZONE - minRatio) / ratioRange) * chartHeight
         const lowerY = padding.top + chartHeight - ((RED_ZONE - minRatio) / ratioRange) * chartHeight
@@ -407,7 +408,7 @@ function RatioChart({
         ctx.stroke()
         
         // Skip auto grid labels between 0.95 and 1.05 — we have static labels
-        // for 0.975, 1.000, and 1.025 already, so no need for numbers in that range
+        // for 0.975, 1.000, and 1.035 already, so no need for numbers in that range
         if (ratioVal >= 0.95 && ratioVal <= 1.05) continue
         ctx.fillText(ratioVal.toFixed(3), padding.left - 4, y + 3)
       }
@@ -431,9 +432,9 @@ function RatioChart({
         ctx.fillText('1.000', padding.left - 4, parityY + 3)
       }
 
-      // ── 1.025 threshold line (orange dashed) ──
-      if (filteredPriceEfficiency.length > 0 && minRatio < 1.025 && maxRatio > 1.025) {
-        const threshY = padding.top + chartHeight - ((1.025 - minRatio) / ratioRange) * chartHeight
+      // ── 1.035 threshold line (orange dashed) ──
+      if (filteredPriceEfficiency.length > 0 && minRatio < 1.035 && maxRatio > 1.035) {
+        const threshY = padding.top + chartHeight - ((1.035 - minRatio) / ratioRange) * chartHeight
         ctx.strokeStyle = 'rgba(249, 115, 22, 0.4)'
         ctx.setLineDash([8, 4])
         ctx.lineWidth = 1
@@ -448,7 +449,7 @@ function RatioChart({
         ctx.fillStyle = '#F97316'
         ctx.textAlign = 'right'
         ctx.font = '9px sans-serif'
-        ctx.fillText('1.025', padding.left - 4, threshY + 3)
+        ctx.fillText('1.035', padding.left - 4, threshY + 3)
       }
 
       // ── 0.975 threshold line (orange dashed) ──
@@ -769,6 +770,10 @@ export default function Dashboard() {
   // Burnt amounts - v4 tracks burns directly on-chain + includes legacy burns
   const [burntAmounts, setBurntAmounts] = useState<{ eshare: bigint; rage: bigint }>({ eshare: 0n, rage: 0n })
   
+  // ERAGE burn tracking — watch Transfer events to address(0) on the ERAGE contract
+  // The contract's burn() function doesn't track totalErageBurned, so we monitor on-chain events
+  const [erageBurnt, setErageBurnt] = useState<bigint>(0n)
+  
   // ============ CONTRACT READS ============
   const { data: ggxBal } = useReadContract({ address: CONTRACTS.GGX, abi: ERC20_ABI, functionName: 'balanceOf', args: address ? [address] : undefined, query: { enabled: !!address } })
   const { data: eshareBal } = useReadContract({ address: CONTRACTS.ESHARE, abi: ERC20_ABI, functionName: 'balanceOf', args: address ? [address] : undefined, query: { enabled: !!address } })
@@ -914,6 +919,28 @@ export default function Dashboard() {
       rage: (totalRageBurned || 0n) + LEGACY_BURNT.rage
     })
   }, [totalEshareBurned, totalRageBurned])
+  
+  // ── ERAGE Burn Tracking ──
+  // The contract's burn() function doesn't increment a totalErageBurned counter,
+  // so we watch for ERC20 Transfer events to address(0) on the ERAGE contract.
+  // This captures voluntary burns via burn() AND ERAGE destroyed during redeem().
+  const ZERO_ADDR = '0x0000000000000000000000000000000000000000' as `0x${string}`
+  
+  useWatchContractEvent({
+    address: CONTRACTS.GGX,
+    abi: ERC20_ABI,
+    eventName: 'Transfer',
+    onLogs(logs) {
+      for (const log of logs) {
+        if (log.args.to?.toLowerCase() === ZERO_ADDR) {
+          const value = log.args.value ?? 0n
+          if (value > 0n) {
+            setErageBurnt(prev => prev + value)
+          }
+        }
+      }
+    },
+  })
   
   const { data: zapRouter } = useReadContract({ address: CONTRACTS.GGXZap, abi: ZAP_ABI, functionName: 'uniswapV3Router' })
   const { data: zapWeth } = useReadContract({ address: CONTRACTS.GGXZap, abi: ZAP_ABI, functionName: 'weth' })
@@ -1853,7 +1880,7 @@ export default function Dashboard() {
                           <p className="text-[10px] text-gray-400 uppercase tracking-wider mb-1">Protocol Backing</p>
                           
                           {/* ESHARE Row */}
-                          <div className="flex items-center mb-1 pb-1 border-b border-white/5">
+                          <div className="flex items-center mb-0.5">
                             <div className="flex items-center gap-1">
                               <img src="/eshare-logo.webp" className="w-4 sm:w-5 h-4 sm:h-5 rounded object-cover" alt="ESHARE" />
                               <span className="text-[10px] sm:text-xs font-semibold text-[#8B5CF6]">ESHARE</span>
@@ -1862,7 +1889,7 @@ export default function Dashboard() {
                           </div>
                           
                           {/* RAGE Row */}
-                          <div className="flex items-center mb-1">
+                          <div className="flex items-center mb-0.5">
                             <div className="flex items-center gap-1">
                               <img src="/rage-logo.webp" className="w-4 sm:w-5 h-4 sm:h-5 rounded object-cover" alt="RAGE" />
                               <span className="text-[10px] sm:text-xs font-semibold text-[#DC2626]">RAGE</span>
@@ -1873,7 +1900,7 @@ export default function Dashboard() {
                         
                         {/* Burnt Section */}
                         <div className="pt-2 border-t border-white/10">
-                          <p className="text-[13px] text-gray-400 text-center mb-1 font-semibold">🔥 Burnt by taxes 🔥</p>
+                          <p className="text-[13px] text-gray-400 text-center mb-1 font-semibold">🔥 Burnt 🔥</p>
                           <div className="flex flex-col gap-0.5 text-xs">
                             <div className="flex items-center gap-1">
                               <img src="/eshare-logo.webp" className="w-3.5 h-3.5 rounded object-cover shrink-0" alt="ESHARE" />
@@ -1882,6 +1909,10 @@ export default function Dashboard() {
                             <div className="flex items-center gap-1">
                               <img src="/rage-logo.webp" className="w-3.5 h-3.5 rounded object-cover shrink-0" alt="RAGE" />
                               <div className="flex gap-1 w-full"><span className="text-[#DC2626] font-semibold w-[50px]">RAGE</span><span className="text-[#DC2626] font-semibold ml-auto">{burntAmounts.rage > 0n ? formatNum(burntAmounts.rage) : '—'}</span></div>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <img src="/ERAGE-logo.webp" className="w-3.5 h-3.5 rounded object-cover shrink-0" alt="ERAGE" />
+                              <div className="flex gap-1 w-full"><span className="text-[#F97316] font-semibold w-[50px]">ERAGE</span><span className="text-[#F97316] font-semibold ml-auto">{erageBurnt > 0n ? formatNum(erageBurnt) : '—'}</span></div>
                             </div>
                           </div>
                         </div>
