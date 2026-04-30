@@ -35,7 +35,7 @@ const LEGACY_BURNT = {
 // ============ CONTRACT ADDRESSES ============
 const CONTRACTS = {
   GGX: '0x328f20857c19cC72b5AeD37b301C129fC2CD8f0A' as `0x${string}`,  // GGX v5 — slippage-protected mint + 48h timelocked emergency drain
-  GGXZap: '0x041b891b6F6cd91F61c05Aa95495f2925033d7cC' as `0x${string}`,  // GGXZapV5 — 0.69% ETH tax, emergencyWithdraw sweeps GGX too
+  GGXZap: '0x6F4a8C77E7a9b697C443d0f24D3f38a679D7a06b' as `0x${string}`,  // ERAGEZapV5_Optimized — QuoterV2 intelligent split + optional rebalance + 0.69% ETH tax
   ESHARE: '0xb7C10146bA1b618956a38605AB6496523d450871' as `0x${string}`,
   RAGE: '0xc0df50143EA93AeC63e38A6ED4E92B378079eA15' as `0x${string}`,
   WETH: '0x4200000000000000000000000000000000000006' as `0x${string}`,
@@ -49,6 +49,7 @@ const CONTRACTS = {
   GGX_RAGE_LP: '0xE9704Fdc0f184ceD4218DFafF2A302A2D59a0265' as `0x${string}`,   // GGX-RAGE V3 1% side pool
   GGX_ESHARE_LP: '0x1638378e4510FBf274a4a882c7765718359ac28A' as `0x${string}`, // GGX-ESHARE V3 1% side pool
   WETH_USDC_LP: '0x6c561b446416e1a00e8e93e221854d6ea4171372' as `0x${string}`, // WETH/USDC Uniswap V3 on Base (correct pool)
+  QUOTER_V2: '0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a' as `0x${string}`,   // Uniswap V3 QuoterV2 on Base (used by Optimized Zap for intelligent splits)
 }
 
 // V3 Fee tiers (in basis points)
@@ -189,27 +190,37 @@ const GGX_ABI = [
 ] as const
 
 const ZAP_ABI = [
-  // V4 Zap functions — same signatures as V3, adds 0.69% ETH tax on zapFromETH
-  { name: 'zapFromETH', type: 'function', stateMutability: 'payable', inputs: [{ name: 'esharePath', type: 'bytes' }, { name: 'ragePath', type: 'bytes' }, { name: 'minGgxOut', type: 'uint256' }, { name: 'deadline', type: 'uint256' }], outputs: [{ name: 'ggxOut', type: 'uint256' }] },
-  { name: 'zapFromEshare', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'eshareAmount', type: 'uint256' }, { name: 'ragePath', type: 'bytes' }, { name: 'minGgxOut', type: 'uint256' }, { name: 'deadline', type: 'uint256' }], outputs: [{ name: 'ggxOut', type: 'uint256' }] },
-  { name: 'zapFromRage', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'rageAmount', type: 'uint256' }, { name: 'esharePath', type: 'bytes' }, { name: 'minGgxOut', type: 'uint256' }, { name: 'deadline', type: 'uint256' }], outputs: [{ name: 'ggxOut', type: 'uint256' }] },
-  { name: 'zapFromToken', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'tokenIn', type: 'address' }, { name: 'amount', type: 'uint256' }, { name: 'esharePath', type: 'bytes' }, { name: 'ragePath', type: 'bytes' }, { name: 'minGgxOut', type: 'uint256' }, { name: 'deadline', type: 'uint256' }], outputs: [{ name: 'ggxOut', type: 'uint256' }] },
-  { name: 'zapFromBothTokens', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'eshareAmount', type: 'uint256' }, { name: 'rageAmount', type: 'uint256' }, { name: 'minGgxOut', type: 'uint256' }], outputs: [{ name: 'ggxOut', type: 'uint256' }] },
-  { name: 'getCommonPaths', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: 'ethToEsharePath', type: 'bytes' }, { name: 'ethToRagePath', type: 'bytes' }] },
+  // ERAGEZapV5_Optimized — QuoterV2 intelligent split + optional rebalance + 0.69% ETH tax
+  { name: 'zapFromETH', type: 'function', stateMutability: 'payable', inputs: [{ name: 'esharePath', type: 'bytes' }, { name: 'ragePath', type: 'bytes' }, { name: 'rebalancePath', type: 'bytes' }, { name: 'minErageOut', type: 'uint256' }, { name: 'deadline', type: 'uint256' }], outputs: [{ name: 'erageOut', type: 'uint256' }] },
+  { name: 'zapFromEshare', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'eshareAmount', type: 'uint256' }, { name: 'ragePath', type: 'bytes' }, { name: 'rebalancePath', type: 'bytes' }, { name: 'minErageOut', type: 'uint256' }, { name: 'deadline', type: 'uint256' }], outputs: [{ name: 'erageOut', type: 'uint256' }] },
+  { name: 'zapFromRage', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'rageAmount', type: 'uint256' }, { name: 'esharePath', type: 'bytes' }, { name: 'rebalancePath', type: 'bytes' }, { name: 'minErageOut', type: 'uint256' }, { name: 'deadline', type: 'uint256' }], outputs: [{ name: 'erageOut', type: 'uint256' }] },
+  { name: 'zapFromToken', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'tokenIn', type: 'address' }, { name: 'amount', type: 'uint256' }, { name: 'esharePath', type: 'bytes' }, { name: 'ragePath', type: 'bytes' }, { name: 'rebalancePath', type: 'bytes' }, { name: 'minErageOut', type: 'uint256' }, { name: 'deadline', type: 'uint256' }], outputs: [{ name: 'erageOut', type: 'uint256' }] },
+  { name: 'zapFromBothTokens', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'eshareAmount', type: 'uint256' }, { name: 'rageAmount', type: 'uint256' }, { name: 'minErageOut', type: 'uint256' }], outputs: [{ name: 'erageOut', type: 'uint256' }] },
+  { name: 'getCommonPaths', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: 'ethToEsharePath', type: 'bytes' }, { name: 'ethToRagePath', type: 'bytes' }, { name: 'eshareToRagePath', type: 'bytes' }, { name: 'rageToEsharePath', type: 'bytes' }] },
   // View functions
-  { name: 'ggx', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] },
+  { name: 'erage', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] },
   { name: 'eshare', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] },
   { name: 'rage', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] },
   { name: 'uniswapV3Router', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] },
+  { name: 'quoter', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] },
   { name: 'weth', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] },
   { name: 'usdc', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] },
   { name: 'owner', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] },
-  { name: 'adminWallet', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] },  // V4: tax recipient
-  { name: 'TAX_BPS', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },       // V5: 69 = 0.69% on ETH zaps
+  { name: 'adminWallet', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] },
+  { name: 'TAX_BPS', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { name: 'quoteRefBps', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { name: 'minQuoteRef', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { name: 'rebalanceThresholdBps', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  // Preview function (non-view due to quoter, use via eth_call)
+  { name: 'previewOptimalSplit', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'esharePath', type: 'bytes' }, { name: 'ragePath', type: 'bytes' }, { name: 'ethAmount', type: 'uint256' }], outputs: [{ name: 'ethForEshare', type: 'uint256' }, { name: 'ethForRage', type: 'uint256' }, { name: 'eshareQuote', type: 'uint256' }, { name: 'rageQuote', type: 'uint256' }] },
   // Admin functions
   { name: 'setRouter', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: '_router', type: 'address' }], outputs: [] },
+  { name: 'setQuoter', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: '_quoter', type: 'address' }], outputs: [] },
   { name: 'setUsdc', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: '_usdc', type: 'address' }], outputs: [] },
-  { name: 'setAdminWallet', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: '_adminWallet', type: 'address' }], outputs: [] },  // V4 new
+  { name: 'setAdminWallet', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: '_adminWallet', type: 'address' }], outputs: [] },
+  { name: 'setQuoteRefBps', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: '_bps', type: 'uint256' }], outputs: [] },
+  { name: 'setMinQuoteRef', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: '_min', type: 'uint256' }], outputs: [] },
+  { name: 'setRebalanceThresholdBps', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: '_bps', type: 'uint256' }], outputs: [] },
   { name: 'emergencyWithdraw', type: 'function', stateMutability: 'nonpayable', inputs: [], outputs: [] },
   { name: 'rescueToken', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'token', type: 'address' }, { name: 'amount', type: 'uint256' }], outputs: [] },
   { name: 'rescueETH', type: 'function', stateMutability: 'nonpayable', inputs: [], outputs: [] },
@@ -1012,9 +1023,12 @@ export default function Dashboard() {
   
   const { data: zapRouter } = useReadContract({ address: CONTRACTS.GGXZap, abi: ZAP_ABI, functionName: 'uniswapV3Router' })
   const { data: zapWeth } = useReadContract({ address: CONTRACTS.GGXZap, abi: ZAP_ABI, functionName: 'weth' })
-  const { data: zapGgx } = useReadContract({ address: CONTRACTS.GGXZap, abi: ZAP_ABI, functionName: 'ggx' })
+  const { data: zapErage } = useReadContract({ address: CONTRACTS.GGXZap, abi: ZAP_ABI, functionName: 'erage' })
   const { data: zapUsdc } = useReadContract({ address: CONTRACTS.GGXZap, abi: ZAP_ABI, functionName: 'usdc' })
   const { data: zapAdminWallet } = useReadContract({ address: CONTRACTS.GGXZap, abi: ZAP_ABI, functionName: 'adminWallet' })  // V4
+  const { data: zapQuoter } = useReadContract({ address: CONTRACTS.GGXZap, abi: ZAP_ABI, functionName: 'quoter' })
+  const { data: zapQuoteRefBps } = useReadContract({ address: CONTRACTS.GGXZap, abi: ZAP_ABI, functionName: 'quoteRefBps' })
+  const { data: zapRebalanceThresholdBps } = useReadContract({ address: CONTRACTS.GGXZap, abi: ZAP_ABI, functionName: 'rebalanceThresholdBps' })
   
   // Zap estimates
   // Note: V3 Zap doesn't have estimate functions - would need V3 Quoter
@@ -1648,7 +1662,7 @@ export default function Dashboard() {
         address: CONTRACTS.GGXZap,
         abi: ZAP_ABI,
         functionName: 'zapFromETH',
-        args: [V3_PATHS.ETH_TO_ESHARE, V3_PATHS.ETH_TO_RAGE, minGgxOut, deadline],
+        args: [V3_PATHS.ETH_TO_ESHARE, V3_PATHS.ETH_TO_RAGE, V3_PATHS.ESHARE_TO_RAGE, minGgxOut, deadline],
         value: amountWei
       })
     } else if (inputToken === 'ESHARE_RAGE') {
@@ -2693,9 +2707,9 @@ export default function Dashboard() {
                         </div>
                         <div className="bg-white/5 rounded-lg p-2 space-y-1">
                           <p className="text-[10px] text-gray-400 uppercase">ERAGE Address</p>
-                          <p className="text-[10px] font-mono text-white break-all">{zapGgx ? `${zapGgx.slice(0, 6)}...${zapGgx.slice(-4)}` : '—'}</p>
+                          <p className="text-[10px] font-mono text-white break-all">{zapErage ? `${zapErage.slice(0, 6)}...${zapErage.slice(-4)}` : '—'}</p>
                           <p className="text-[9px] text-gray-500 mt-1">Expected: {CONTRACTS.GGX.slice(0, 6)}...{CONTRACTS.GGX.slice(-4)}</p>
-                          {zapGgx && zapGgx.toLowerCase() !== CONTRACTS.GGX.toLowerCase() && (
+                          {zapErage && zapErage.toLowerCase() !== CONTRACTS.GGX.toLowerCase() && (
                             <p className="text-[9px] text-[#EF4444]">⚠️ Mismatch!</p>
                           )}
                         </div>
@@ -2704,12 +2718,28 @@ export default function Dashboard() {
                           <p className="text-[10px] font-mono text-white break-all">{zapAdminWallet ? `${zapAdminWallet.slice(0, 10)}...${zapAdminWallet.slice(-6)}` : '—'}</p>
                           <p className="text-[9px] text-gray-500">Receives 0.69% of ETH on every zapFromETH</p>
                         </div>
+                        <div className="bg-white/5 rounded-lg p-2 space-y-1">
+                          <p className="text-[10px] text-gray-400 uppercase">QuoterV2 Address</p>
+                          <p className="text-[10px] font-mono text-white break-all">{zapQuoter ? `${zapQuoter.slice(0, 6)}...${zapQuoter.slice(-4)}` : '—'}</p>
+                          <p className="text-[9px] text-gray-500 mt-1">Expected: {CONTRACTS.QUOTER_V2.slice(0, 6)}...{CONTRACTS.QUOTER_V2.slice(-4)}</p>
+                          {zapQuoter && zapQuoter.toLowerCase() !== CONTRACTS.QUOTER_V2.toLowerCase() && (
+                            <p className="text-[9px] text-[#EF4444]">⚠️ Mismatch!</p>
+                          )}
+                        </div>
+                        <div className="bg-white/5 rounded-lg p-2 space-y-1">
+                          <p className="text-[10px] text-gray-400 uppercase">Split Config</p>
+                          <p className="text-[10px] font-mono text-white">quoteRefBps: {zapQuoteRefBps ? String(zapQuoteRefBps) : '—'}</p>
+                          <p className="text-[10px] font-mono text-white">rebalanceThreshold: {zapRebalanceThresholdBps ? `${String(zapRebalanceThresholdBps)} bps` : '—'}</p>
+                          <p className="text-[9px] text-gray-500 mt-1">Ref BPS for quoter & rebalance trigger threshold</p>
+                        </div>
                         <div className="col-span-2 bg-[#10B981]/10 border border-[#10B981]/20 rounded-lg p-3">
-                          <p className="text-xs text-[#10B981] font-medium">✅ V5 Zap Active — 0.69% ETH Tax</p>
-                          <p className="text-[10px] text-gray-400 mt-1">Multi-hop routing via V3 pools:</p>
+                          <p className="text-xs text-[#10B981] font-medium">✅ V5 Optimized Zap Active — QuoterV2 Intelligent Split + 0.69% ETH Tax</p>
+                          <p className="text-[10px] text-gray-400 mt-1">Price-aware splitting via Uniswap V3 QuoterV2 + optional rebalance pass:</p>
                           <ul className="text-[10px] text-gray-400 mt-1 list-disc list-inside space-y-0.5">
                             <li>ETH → ESHARE: Direct via WETH/ESHARE pool ({POOL_FEES.WETH_ESHARE/10000}% fee)</li>
                             <li>ETH → RAGE: WETH → USDC → RAGE ({POOL_FEES.WETH_USDC/10000}% + {POOL_FEES.USDC_RAGE/10000}% fees)</li>
+                            <li className="text-[#3B82F6]">QuoterV2: Queries live pool prices to calculate optimal ETH split (no oracle needed)</li>
+                            <li className="text-[#3B82F6]">Rebalance: Swaps excess token for deficient one to minimize dust returned</li>
                             <li className="text-[#F59E0B]">ETH zaps: 0.69% tax sent to adminWallet before swapping</li>
                           </ul>
                         </div>
@@ -2801,11 +2831,11 @@ export default function Dashboard() {
                           </div>
                         </div>
 
-                        {/* Zap Contract — emergencyWithdraw (ES+RA+ERAGE) + rescueETH + rescueToken */}
+                        {/* Zap Contract (V5 Optimized) — emergencyWithdraw (ES+RA+ERAGE) + rescueETH + rescueToken */}
                         <div className="bg-[#EF4444]/5 border border-[#EF4444]/20 rounded-lg p-3 space-y-2">
                           <div className="flex items-center gap-2">
                             <AlertTriangle size={14} className="text-[#EF4444]" />
-                            <p className="text-xs font-semibold text-[#EF4444]">ERAGE Zap Emergency</p>
+                            <p className="text-xs font-semibold text-[#EF4444]">ERAGE Zap Emergency (V5 Optimized)</p>
                           </div>
                           <div className="space-y-1.5">
                             <p className="text-[10px] text-gray-400 uppercase tracking-wider">Rescue stuck token (not ES/RA/ERAGE)</p>
