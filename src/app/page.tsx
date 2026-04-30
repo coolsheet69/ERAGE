@@ -2488,7 +2488,7 @@ export default function Dashboard() {
                           <UniswapWidget ggxAddress={CONTRACTS.GGX} />
                         </div>
                         <div className="shrink-0 flex items-center justify-center overflow-hidden">
-                          <img src="/ERAGE-logo.webp" className="w-16 h-16 sm:w-20 sm:h-20 lg:w-44 lg:h-44 object-contain opacity-60" alt="ERAGE" />
+                          <img src="/ERAGE-logo.webp" className="w-16 h-16 sm:w-20 sm:h-20 lg:w-48 lg:h-48 object-contain opacity-60" alt="ERAGE" />
                         </div>
                       </div>
                       {/* Links row */}
