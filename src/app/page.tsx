@@ -22,7 +22,7 @@ import { useChartHistory } from './useChartHistory'
 import { 
   TrendingUp, Wallet, Zap, ArrowUpRight, Flame, 
   RefreshCw, Settings, Shield, AlertTriangle, Pause, Play,
-  Trash2, DollarSign, MessageCircle, FileText
+  Trash2, DollarSign, MessageCircle, FileText, Copy, Check
 } from 'lucide-react'
 
 // ============ LEGACY BURNT VALUES (v1 + v2 + v3 + v4 contracts) ============
@@ -254,6 +254,32 @@ const formatPrice = (price: number): string => {
   if (price < 0.01) return price.toFixed(6)
   if (price < 1) return price.toFixed(4)
   return price.toFixed(2)
+}
+
+// ============ COPY ADDRESS BUTTON ============
+function CopyAddr({ address, color }: { address: string; color: string }) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    navigator.clipboard.writeText(address).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    })
+  }
+
+  return (
+    <button
+      onClick={handleCopy}
+      className="absolute top-1 left-1.5 text-[9px] flex items-center gap-0.5 transition-colors z-10"
+      style={{ color: copied ? '#10B981' : `${color}99` }}
+      title={`Copy ${address}`}
+    >
+      {copied ? <Check size={8} /> : <Copy size={8} />}
+      {copied ? 'Copied' : 'Addr'}
+    </button>
+  )
 }
 
 // ============ RATIO CHART COMPONENT ============
@@ -778,7 +804,7 @@ export default function Dashboard() {
     addBackingRatioPoint,
   } = useChartHistory()
 
-  const [timeRange, setTimeRange] = useState<TimeRange>('4h')
+  const [timeRange, setTimeRange] = useState<TimeRange>('1d')
   
   // Chart history loading/clearing is handled by useChartHistory hook above
   // No more inline localStorage logic here — data persists across page.tsx updates
@@ -2389,18 +2415,21 @@ export default function Dashboard() {
                           <p className="text-[10px] text-[#10B981] text-center leading-tight">{ethBal && prices.ethPriceUsd > 0 ? `$${formatPrice(parseFloat(formatUnits(ethBal.value, ethBal.decimals)) * prices.ethPriceUsd)}` : '—'}</p>
                         </div>
                         <div className="relative bg-[#141416]/80 rounded-lg py-1.5 px-2 border border-[#FF6B35]/15">
+                          <CopyAddr address={CONTRACTS.ESHARE} color="#8B5CF6" />
                           <a href={`https://app.uniswap.org/swap?inputCurrency=ETH&outputCurrency=${CONTRACTS.ESHARE}&chain=base`} target="_blank" rel="noopener noreferrer" className="absolute top-1 right-1.5 text-[9px] text-[#8B5CF6]/60 hover:text-[#8B5CF6] flex items-center gap-0.5 transition-colors">Swap <ArrowUpRight size={8} /></a>
                           <p className="text-[11px] text-[#8B5CF6] text-center">ESHARE</p>
                           <p className="font-mono text-[11px] sm:text-[13px] text-center leading-tight">{formatNum(eshareBal)}</p>
                           <p className="text-[10px] text-[#10B981] text-center leading-tight">{eshareBal && prices.esharePrice > 0 && prices.ethPriceUsd > 0 ? `$${formatPrice(parseFloat(formatUnits(eshareBal, 18)) * prices.esharePrice * prices.ethPriceUsd)}` : '—'}</p>
                         </div>
                         <div className="relative bg-[#141416]/80 rounded-lg py-1.5 px-2 border border-[#FF6B35]/15">
+                          <CopyAddr address={CONTRACTS.RAGE} color="#EF4444" />
                           <a href={`https://app.uniswap.org/swap?inputCurrency=ETH&outputCurrency=${CONTRACTS.RAGE}&chain=base`} target="_blank" rel="noopener noreferrer" className="absolute top-1 right-1.5 text-[9px] text-[#EF4444]/60 hover:text-[#EF4444] flex items-center gap-0.5 transition-colors">Swap <ArrowUpRight size={8} /></a>
                           <p className="text-[11px] text-[#EF4444] text-center">RAGE</p>
                           <p className="font-mono text-[11px] sm:text-[13px] text-center leading-tight">{formatNum(rageBal)}</p>
                           <p className="text-[10px] text-[#10B981] text-center leading-tight">{rageBal && prices.ragePrice > 0 ? `$${formatPrice(parseFloat(formatUnits(rageBal, 18)) * prices.ragePrice)}` : '—'}</p>
                         </div>
                         <div className="relative bg-[#141416]/80 rounded-lg py-1.5 px-2 border border-[#FF6B35]/15">
+                          <CopyAddr address={CONTRACTS.GGX} color="#FF6B35" />
                           <a href={`https://app.uniswap.org/swap?inputCurrency=ETH&outputCurrency=${CONTRACTS.GGX}&chain=base`} target="_blank" rel="noopener noreferrer" className="absolute top-1 right-1.5 text-[9px] text-[#FF6B35]/60 hover:text-[#FF6B35] flex items-center gap-0.5 transition-colors">Swap <ArrowUpRight size={8} /></a>
                           <p className="text-[11px] text-[#FF6B35] text-center">ERAGE</p>
                           <p className="font-mono text-[11px] sm:text-[13px] text-center leading-tight">{formatNum(ggxBal)}</p>
