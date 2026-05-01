@@ -1868,14 +1868,12 @@ export default function Dashboard() {
                     <div className="w-2 h-2 rounded-full bg-[#10B981]" />
                     <span className="text-xs sm:text-sm font-mono">{address?.slice(0, 4)}...{address?.slice(-3)}</span>
                   </div>
-                  {isAdmin && (
-                    <button 
-                      onClick={() => setShowAdmin(!showAdmin)}
-                      className={`p-1.5 sm:p-2 rounded-xl border transition-all ${showAdmin ? 'bg-[#F59E0B]/20 border-[#F59E0B]/30 text-[#F59E0B]' : 'bg-white/5 border-white/10 text-gray-400 hover:text-white'}`}
-                    >
-                      <Settings size={14} className="sm:hidden" /><Settings size={18} className="hidden sm:block" />
-                    </button>
-                  )}
+                  <button 
+                    onClick={() => setShowAdmin(!showAdmin)}
+                    className={`p-1.5 sm:p-2 rounded-xl border transition-all ${showAdmin ? 'bg-[#F59E0B]/20 border-[#F59E0B]/30 text-[#F59E0B]' : 'bg-white/5 border-white/10 text-gray-400 hover:text-white'}`}
+                  >
+                    <Settings size={14} className="sm:hidden" /><Settings size={18} className="hidden sm:block" />
+                  </button>
                   <button 
                     onClick={handleRefresh}
                     className="p-1.5 sm:p-2 bg-white/5 hover:bg-white/10 rounded-xl border border-white/10 transition-all"
@@ -2553,6 +2551,80 @@ export default function Dashboard() {
                 </div>
               </div>
               
+              {/* User Info Panel — visible for all wallets */}
+              {!isAdmin && showAdmin && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setShowAdmin(false)}>
+                  {/* Backdrop */}
+                  <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
+                  {/* Modal */}
+                  <div className="relative w-full max-w-md max-h-[85vh] overflow-y-auto rounded-2xl bg-[#0F0F10] border border-[#FF6B35]/30 shadow-2xl shadow-[#FF6B35]/10" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center justify-between px-4 py-3 bg-[#FF6B35]/10 border-b border-[#FF6B35]/20 sticky top-0 z-10 rounded-t-2xl">
+                    <div className="flex items-center gap-2">
+                      <Settings size={14} className="text-[#FF6B35]" />
+                      <span className="text-sm font-semibold text-[#FF6B35]">ERAGE Protocol Info</span>
+                    </div>
+                    <button onClick={() => setShowAdmin(false)} className="text-gray-400 hover:text-white transition-colors p-1 rounded-lg hover:bg-white/10">✕</button>
+                  </div>
+                  
+                  <div className="p-3 space-y-3">
+                    {/* Burn ERAGE */}
+                    <div className="bg-white/5 rounded-lg p-2 space-y-2">
+                      <p className="text-[10px] text-[#F97316] uppercase">Burn ERAGE</p>
+                      <input type="number" value={burnErageAmount} onChange={(e) => setBurnErageAmount(e.target.value)} placeholder="Amount to burn" className="w-full bg-white/5 border border-white/10 rounded px-2 py-1 text-xs" />
+                      <button onClick={handleBurnERAGE} disabled={!burnErageAmount || parseFloat(burnErageAmount) <= 0 || isLoading} className="w-full py-1 text-[10px] bg-[#F97316]/20 text-[#F97316] rounded border border-[#F97316]/30 disabled:opacity-50 flex items-center justify-center gap-1"><Flame size={10} /> Burn</button>
+                      <p className="text-[9px] text-gray-500">Your balance: {ggxBal ? formatNum(ggxBal) : '—'} ERAGE</p>
+                    </div>
+
+                    {/* Tax Summary */}
+                    <div className="bg-white/5 rounded-lg p-2 space-y-1">
+                      <p className="text-[10px] text-gray-400 uppercase">Tax Summary (v5 — Slippage Protected + 48h Timelock)</p>
+                      <div className="grid grid-cols-2 gap-1 text-[9px]">
+                        <div className="bg-[#10B981]/10 rounded p-1">
+                          <span className="text-[#10B981]">Fixed:</span> {fixedBackingTaxBps?.toString() || '13'} BPS ({((Number(fixedBackingTaxBps || 13)) / 100).toFixed(2)}%)
+                        </div>
+                        <div className="bg-[#3B82F6]/10 rounded p-1">
+                          <span className="text-[#3B82F6]">Linear:</span> {linearBackingTaxBps?.toString() || '69'} BPS ({((Number(linearBackingTaxBps || 69)) / 100).toFixed(2)}%)
+                        </div>
+                        <div className="bg-[#8B5CF6]/10 rounded p-1">
+                          <span className="text-[#8B5CF6]">ES Burn:</span> {eshareBurnTaxBps?.toString() || '69'} BPS ({((Number(eshareBurnTaxBps || 69)) / 100).toFixed(2)}%)
+                        </div>
+                        <div className="bg-[#EF4444]/10 rounded p-1">
+                          <span className="text-[#EF4444]">RA Burn:</span> {rageBurnTaxBps?.toString() || '69'} BPS ({((Number(rageBurnTaxBps || 69)) / 100).toFixed(2)}%)
+                        </div>
+                      </div>
+                      <div className="mt-1 pt-1 border-t border-white/10 flex justify-between items-center text-[9px]">
+                        <span className="text-gray-400">Total: {totalTaxBps?.toString() || '220'} BPS ({((Number(totalTaxBps || 220)) / 100).toFixed(2)}%)</span>
+                        <span className="text-[#FFD700]">Round-trip: {((Number(totalTaxBps || 220)) * 2 / 100).toFixed(1)}%</span>
+                      </div>
+                      <p className="text-[9px] text-gray-500">Same tax on mint and redeem — ratio ratchets up both ways</p>
+                    </div>
+
+                    {/* TVL Breakdown */}
+                    <div className="bg-white/5 rounded-lg p-2 space-y-1">
+                      <p className="text-[10px] text-gray-400 uppercase">TVL Breakdown</p>
+                      <div className="grid grid-cols-1 gap-2 text-[9px]">
+                        <div className="bg-[#8B5CF6]/10 rounded p-1.5">
+                          <p className="text-[#8B5CF6] font-semibold">ESHARE Backing</p>
+                          <p className="text-white">{backingBalances ? formatNum(backingBalances[0]) : '—'} ES</p>
+                          <p className="text-gray-400">{backingBalances && prices.esharePrice > 0 ? `$${formatPrice(parseFloat(formatUnits(backingBalances[0], 18)) * prices.esharePrice * prices.ethPriceUsd)}` : '—'}</p>
+                        </div>
+                        <div className="bg-[#EF4444]/10 rounded p-1.5">
+                          <p className="text-[#EF4444] font-semibold">RAGE Backing</p>
+                          <p className="text-white">{backingBalances ? formatNum(backingBalances[1]) : '—'} RA</p>
+                          <p className="text-gray-400">{backingBalances && prices.ragePrice > 0 ? `$${formatPrice(parseFloat(formatUnits(backingBalances[1], 18)) * prices.ragePrice)}` : '—'}</p>
+                        </div>
+                        <div className="bg-[#3B82F6]/10 rounded p-1.5">
+                          <p className="text-[#3B82F6] font-semibold">ERAGE-ETH Pool</p>
+                          <p className="text-white">{ggxPoolWethBal ? formatNum(ggxPoolWethBal, 18) : '—'} ETH</p>
+                          <p className="text-gray-400">{ggxPoolWethBal && prices.ethPriceUsd > 0 ? `$${formatPrice(parseFloat(formatUnits(ggxPoolWethBal, 18)) * prices.ethPriceUsd)}` : '—'}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  </div>
+                </div>
+              )}
+
               {/* Admin Console Modal */}
               {isAdmin && showAdmin && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setShowAdmin(false)}>
