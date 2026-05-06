@@ -50,6 +50,8 @@ const CONTRACTS = {
   GGX_ESHARE_LP: '0x1638378e4510FBf274a4a882c7765718359ac28A' as `0x${string}`, // GGX-ESHARE V3 1% side pool
   WETH_USDC_LP: '0x6c561b446416e1a00e8e93e221854d6ea4171372' as `0x${string}`, // WETH/USDC Uniswap V3 on Base (correct pool)
   QUOTER_V2: '0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a' as `0x${string}`,   // Uniswap V3 QuoterV2 on Base (used by Optimized Zap for intelligent splits)
+  ERAGE_RAGE_LP: '0x9e7C2Ce84346d57EdCE3f38A9e6585d4d0317F7d' as `0x${string}`,  // ERAGE-RAGE V3 1% pool
+  ERAGE_ESHARE_LP: '0x2CFD00bf5B36C7b4Ff8D45eC3D7254ABA34c881f' as `0x${string}`, // ERAGE-ESHARE V3 1% pool
 }
 
 // V3 Fee tiers (in basis points)
@@ -918,6 +920,12 @@ export default function Dashboard() {
   // GGX-ESHARE side pool balances (for protocol TVL)
   const { data: ggxEsharePoolGgxBal } = useReadContract({ address: CONTRACTS.GGX, abi: ERC20_ABI, functionName: 'balanceOf', args: [CONTRACTS.GGX_ESHARE_LP], query: { refetchInterval: 20000 } })
   const { data: ggxEsharePoolEshareBal } = useReadContract({ address: CONTRACTS.ESHARE, abi: ERC20_ABI, functionName: 'balanceOf', args: [CONTRACTS.GGX_ESHARE_LP], query: { refetchInterval: 20000 } })
+
+  // ERAGE-RAGE V3 1% pool (0x9e7C...) — calculate RAGE side only for TVL
+  const { data: erageRagePoolRageBal } = useReadContract({ address: CONTRACTS.RAGE, abi: ERC20_ABI, functionName: 'balanceOf', args: [CONTRACTS.ERAGE_RAGE_LP], query: { refetchInterval: 20000 } })
+
+  // ERAGE-ESHARE V3 1% pool (0x2CFD...) — calculate ESHARE side only for TVL
+  const { data: erageEsharePoolEshareBal } = useReadContract({ address: CONTRACTS.ESHARE, abi: ERC20_ABI, functionName: 'balanceOf', args: [CONTRACTS.ERAGE_ESHARE_LP], query: { refetchInterval: 20000 } })
 
   // Liquidity reads used by auto-slippage. The ESHARE leg is the tighter pool
   // in practice; the RAGE leg routes via USDC so its binding liquidity is the
@@ -1855,10 +1863,7 @@ export default function Dashboard() {
                 <span className="w-1.5 h-1.5 rounded-full bg-[#3B82F6] animate-pulse" />
                 Base
               </span>
-              <span className="hidden lg:flex items-center gap-1.5 animate-pulse text-[9px]" style={{ animationDuration: '3s', animationTimingFunction: 'ease-in-out' }}>
-                <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#EF4444] shrink-0"></span>
-                <span className="text-[#EF4444] font-semibold">Bootstrapping Phase: Low/Medium Liquidity, suggested trade sizing under $50 each</span>
-              </span>
+
             </div>
             
             <div className="flex items-center gap-1 sm:gap-2 shrink-0">
@@ -1894,17 +1899,7 @@ export default function Dashboard() {
         
         {/* Main Content */}
         <main className="flex-1 max-w-7xl mx-auto w-full px-2 sm:px-3 py-1 pb-4 lg:pb-1 lg:min-h-0 flex flex-col">
-          {!isConnected ? (
-            <div className="flex flex-col items-center justify-center h-[calc(100vh-200px)] animate-fade-in-up">
-              <img src="/ERAGE-logo.webp" className="w-48 h-48 rounded-3xl object-cover shadow-2xl shadow-[#FF6B35]/30 animate-pulse-glow" alt="ERAGE" />
-              <h2 className="text-3xl font-bold mt-6 mb-2"><span className="gradient-text-animated">ERAGE Protocol</span></h2>
-              <p className="text-gray-400 text-lg mb-6">Dual-backed ratchet token</p>
-              <button onClick={() => connect({ connector: connectors[0] })} disabled={isConnecting} className="px-8 py-3 text-base btn-primary rounded-xl font-semibold disabled:opacity-50 flex items-center gap-2">
-                <Wallet size={20} /> Connect Wallet
-              </button>
-            </div>
-          ) : (
-            <div className="flex-1 min-h-0 lg:min-h-0 flex flex-col">
+          <div className="flex-1 min-h-0 lg:min-h-0 flex flex-col">
               {/* Main Grid — mobile scrolls naturally, desktop uses viewport-locked layout */}
               <div className="flex-1 grid grid-cols-12 gap-2 min-h-0 lg:overflow-hidden">
                 {/* Left Column */}
@@ -2051,7 +2046,9 @@ export default function Dashboard() {
                                 parseFloat(formatUnits(backingBalances[1], 18)) * prices.ragePrice +
                                 (ggxPoolWethBal ? parseFloat(formatUnits(ggxPoolWethBal, 18)) : 0) * prices.ethPriceUsd +
                                 (ggxRagePoolRageBal ? parseFloat(formatUnits(ggxRagePoolRageBal, 18)) : 0) * prices.ragePrice +
-                                (ggxEsharePoolEshareBal ? parseFloat(formatUnits(ggxEsharePoolEshareBal, 18)) : 0) * prices.esharePrice * prices.ethPriceUsd
+                                (ggxEsharePoolEshareBal ? parseFloat(formatUnits(ggxEsharePoolEshareBal, 18)) : 0) * prices.esharePrice * prices.ethPriceUsd +
+                                (erageRagePoolRageBal ? parseFloat(formatUnits(erageRagePoolRageBal, 18)) : 0) * prices.ragePrice +
+                                (erageEsharePoolEshareBal ? parseFloat(formatUnits(erageEsharePoolEshareBal, 18)) : 0) * prices.esharePrice * prices.ethPriceUsd
                               ))}
                             </p>
                           </div>
@@ -2405,6 +2402,7 @@ export default function Dashboard() {
                       {/* V3 Route Info for ETH - removed as requested */}
                       
                       {/* All Balances */}
+                      {isConnected ? (
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 text-sm">
                         <div className="relative bg-[#141416]/80 rounded-lg py-1.5 px-2 border border-[#FF6B35]/15">
                           <a href={`https://app.uniswap.org/swap?inputCurrency=${CONTRACTS.USDC}&outputCurrency=${CONTRACTS.WETH}&chain=base`} target="_blank" rel="noopener noreferrer" className="absolute top-1 right-1.5 text-[9px] text-gray-400/60 hover:text-gray-300 flex items-center gap-0.5 transition-colors">Swap <ArrowUpRight size={8} /></a>
@@ -2434,6 +2432,11 @@ export default function Dashboard() {
                           <p className="text-[10px] text-[#10B981] text-center leading-tight">{ggxBal && prices.ggxPriceUsd > 0 ? `$${formatPrice(parseFloat(formatUnits(ggxBal, 18)) * prices.ggxPriceUsd)}` : '—'}</p>
                         </div>
                       </div>
+                      ) : (
+                      <div className="text-center py-2 px-3 bg-white/5 rounded-lg border border-white/10">
+                        <p className="text-xs text-gray-400">Connect wallet to view your balances</p>
+                      </div>
+                      )}
                       
                       {/* Slippage / Redeem info — always renders to keep action button stable */}
                       <div className="space-y-1">
@@ -2482,7 +2485,15 @@ export default function Dashboard() {
                       </div>
 
                       {/* Action Buttons */}
-                      {inputToken === 'ESHARE_RAGE' && needsApproval ? (
+                      {!isConnected ? (
+                        <button 
+                          onClick={() => connect({ connector: connectors[0] })} 
+                          disabled={isConnecting}
+                          className="w-full py-2.5 rounded-lg text-sm font-semibold btn-primary disabled:opacity-50 flex items-center justify-center gap-2"
+                        >
+                          <Wallet size={16} /> Connect Wallet
+                        </button>
+                      ) : inputToken === 'ESHARE_RAGE' && needsApproval ? (
                         <div className="flex gap-2">
                           <button 
                             onClick={handleApproveEshare} 
@@ -2519,11 +2530,6 @@ export default function Dashboard() {
                           {actionButtonText}
                         </button>
                       )}
-                      {/* Bootstrapping warning moved to header on desktop; show compact version on mobile only */}
-                      <div className="lg:hidden flex items-start gap-1.5 animate-pulse text-[10px]" style={{ animationDuration: '3s', animationTimingFunction: 'ease-in-out' }}>
-                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#EF4444] mt-0.5 shrink-0"></span>
-                        <span className="text-[#EF4444] font-semibold">Bootstrapping: Trade under $50</span>
-                      </div>
                     </div>
 
                     {/* Widget + Logo side by side — tall min-height on mobile (natural scroll), flex-1 on desktop (viewport-locked) */}
@@ -2551,8 +2557,8 @@ export default function Dashboard() {
                 </div>
               </div>
               
-              {/* User Info Panel — visible for all wallets */}
-              {!isAdmin && showAdmin && (
+              {/* User Info Panel — visible for all connected wallets */}
+              {isConnected && !isAdmin && showAdmin && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setShowAdmin(false)}>
                   {/* Backdrop */}
                   <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
@@ -2617,6 +2623,16 @@ export default function Dashboard() {
                           <p className="text-[#3B82F6] font-semibold">ERAGE-ETH Pool</p>
                           <p className="text-white">{ggxPoolWethBal ? formatNum(ggxPoolWethBal, 18) : '—'} ETH</p>
                           <p className="text-gray-400">{ggxPoolWethBal && prices.ethPriceUsd > 0 ? `$${formatPrice(parseFloat(formatUnits(ggxPoolWethBal, 18)) * prices.ethPriceUsd)}` : '—'}</p>
+                        </div>
+                        <div className="bg-[#EF4444]/10 rounded p-1.5">
+                          <p className="text-[#EF4444] font-semibold">ERAGE-RAGE Pool</p>
+                          <p className="text-white">{erageRagePoolRageBal ? formatNum(erageRagePoolRageBal, 18) : '—'} RA</p>
+                          <p className="text-gray-400">{erageRagePoolRageBal && prices.ragePrice > 0 ? `$${formatPrice(parseFloat(formatUnits(erageRagePoolRageBal, 18)) * prices.ragePrice)}` : '—'}</p>
+                        </div>
+                        <div className="bg-[#8B5CF6]/10 rounded p-1.5">
+                          <p className="text-[#8B5CF6] font-semibold">ERAGE-ESHARE Pool</p>
+                          <p className="text-white">{erageEsharePoolEshareBal ? formatNum(erageEsharePoolEshareBal, 18) : '—'} ES</p>
+                          <p className="text-gray-400">{erageEsharePoolEshareBal && prices.esharePrice > 0 ? `$${formatPrice(parseFloat(formatUnits(erageEsharePoolEshareBal, 18)) * prices.esharePrice * prices.ethPriceUsd)}` : '—'}</p>
                         </div>
                       </div>
                     </div>
@@ -2739,7 +2755,7 @@ export default function Dashboard() {
                         
                         <div className="col-span-2 lg:col-span-4 bg-white/5 rounded-lg p-2 space-y-1">
                           <p className="text-[10px] text-gray-400 uppercase">TVL Breakdown</p>
-                          <div className="grid grid-cols-3 gap-2 text-[9px]">
+                          <div className="grid grid-cols-3 lg:grid-cols-4 gap-2 text-[9px]">
                             <div className="bg-[#8B5CF6]/10 rounded p-1.5">
                               <p className="text-[#8B5CF6] font-semibold">ESHARE Backing</p>
                               <p className="text-white">{backingBalances ? formatNum(backingBalances[0]) : '—'} ES</p>
@@ -2765,6 +2781,16 @@ export default function Dashboard() {
                               <p className="text-white">{ggxEsharePoolEshareBal ? formatNum(ggxEsharePoolEshareBal, 18) : '—'} ES</p>
                               <p className="text-gray-400">{ggxEsharePoolEshareBal && prices.esharePrice > 0 ? `$${formatPrice(parseFloat(formatUnits(ggxEsharePoolEshareBal, 18)) * prices.esharePrice * prices.ethPriceUsd)}` : '—'}</p>
                             </div>
+                            <div className="bg-[#EF4444]/10 rounded p-1.5">
+                              <p className="text-[#EF4444] font-semibold">ERAGE-RAGE Pool (V3 1%)</p>
+                              <p className="text-white">{erageRagePoolRageBal ? formatNum(erageRagePoolRageBal, 18) : '—'} RA</p>
+                              <p className="text-gray-400">{erageRagePoolRageBal && prices.ragePrice > 0 ? `$${formatPrice(parseFloat(formatUnits(erageRagePoolRageBal, 18)) * prices.ragePrice)}` : '—'}</p>
+                            </div>
+                            <div className="bg-[#8B5CF6]/10 rounded p-1.5">
+                              <p className="text-[#8B5CF6] font-semibold">ERAGE-ESHARE Pool (V3 1%)</p>
+                              <p className="text-white">{erageEsharePoolEshareBal ? formatNum(erageEsharePoolEshareBal, 18) : '—'} ES</p>
+                              <p className="text-gray-400">{erageEsharePoolEshareBal && prices.esharePrice > 0 ? `$${formatPrice(parseFloat(formatUnits(erageEsharePoolEshareBal, 18)) * prices.esharePrice * prices.ethPriceUsd)}` : '—'}</p>
+                            </div>
                           </div>
                           <div className="mt-1 pt-1 border-t border-white/10 flex justify-between items-center">
                             <span className="text-[10px] text-gray-400">Total TVL:</span>
@@ -2775,7 +2801,9 @@ export default function Dashboard() {
                                     parseFloat(formatUnits(backingBalances[1], 18)) * prices.ragePrice +
                                     (ggxPoolWethBal ? parseFloat(formatUnits(ggxPoolWethBal, 18)) : 0) * prices.ethPriceUsd +
                                     (ggxRagePoolRageBal ? parseFloat(formatUnits(ggxRagePoolRageBal, 18)) : 0) * prices.ragePrice +
-                                    (ggxEsharePoolEshareBal ? parseFloat(formatUnits(ggxEsharePoolEshareBal, 18)) : 0) * prices.esharePrice * prices.ethPriceUsd
+                                    (ggxEsharePoolEshareBal ? parseFloat(formatUnits(ggxEsharePoolEshareBal, 18)) : 0) * prices.esharePrice * prices.ethPriceUsd +
+                                    (erageRagePoolRageBal ? parseFloat(formatUnits(erageRagePoolRageBal, 18)) : 0) * prices.ragePrice +
+                                    (erageEsharePoolEshareBal ? parseFloat(formatUnits(erageEsharePoolEshareBal, 18)) : 0) * prices.esharePrice * prices.ethPriceUsd
                                   ))
                                 : '—'}
                             </span>
@@ -2965,7 +2993,6 @@ export default function Dashboard() {
                 </div>
               )}
             </div>
-          )}
         </main>
       </div>
     </div>
