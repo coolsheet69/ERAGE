@@ -45,7 +45,7 @@ const CONTRACTS = {
   // LP Pairs for price feeds (Uniswap V3)
   RAGE_LP: '0xd474B32a5a2BF93453996287D361a00f661E04FF' as `0x${string}`,
   ESHARE_LP: '0x0656CDF4539f412F542A8D8a029f7c6c5cE90d7B' as `0x${string}`,
-  GGX_LP: '0xa1c0e4ee41f1ab7113e78fb52bb67a06a16aacaa' as `0x${string}`,        // ERAGE-ETH V3 pool
+  GGX_LP: '0x4a3a2fB49D1dDe37E8903E99003F74c9e53af421' as `0x${string}`,        // ERAGE-ETH V3 0.3% pool
   GGX_RAGE_LP: '0xE9704Fdc0f184ceD4218DFafF2A302A2D59a0265' as `0x${string}`,   // GGX-RAGE V3 1% side pool
   GGX_ESHARE_LP: '0x1638378e4510FBf274a4a882c7765718359ac28A' as `0x${string}`, // GGX-ESHARE V3 1% side pool
   WETH_USDC_LP: '0x6c561b446416e1a00e8e93e221854d6ea4171372' as `0x${string}`, // WETH/USDC Uniswap V3 on Base (correct pool)
