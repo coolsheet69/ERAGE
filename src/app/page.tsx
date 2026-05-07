@@ -727,7 +727,7 @@ function UniswapWidget({ ggxAddress }: { ggxAddress: string }) {
           border: 'none',
           width: '125%',
           height: '760px',
-          transform: 'scale(0.80)',
+          transform: 'scale(0.77)',
           transformOrigin: 'top left',
           borderRadius: '12px',
         }}
