@@ -285,7 +285,7 @@ function CopyAddr({ address, color }: { address: string; color: string }) {
 }
 
 // ============ RATIO CHART COMPONENT ============
-type TimeRange = '4h' | '1d' | '1w'
+type TimeRange = '4h' | '1d' | '1w' | '2w'
 
 function RatioChart({ 
   history, 
@@ -308,7 +308,8 @@ function RatioChart({
     const now = Date.now()
     const cutoff = timeRange === '4h' ? now - 4 * 60 * 60 * 1000 
                  : timeRange === '1d' ? now - 24 * 60 * 60 * 1000 
-                 : now - 7 * 24 * 60 * 60 * 1000
+                 : timeRange === '1w' ? now - 7 * 24 * 60 * 60 * 1000
+                 : now - 14 * 24 * 60 * 60 * 1000
     return history.filter(h => h.time >= cutoff)
   }, [history, timeRange])
   
@@ -317,7 +318,8 @@ function RatioChart({
     const now = Date.now()
     const cutoff = timeRange === '4h' ? now - 4 * 60 * 60 * 1000 
                  : timeRange === '1d' ? now - 24 * 60 * 60 * 1000 
-                 : now - 7 * 24 * 60 * 60 * 1000
+                 : timeRange === '1w' ? now - 7 * 24 * 60 * 60 * 1000
+                 : now - 14 * 24 * 60 * 60 * 1000
     const filtered = priceEfficiencyHistory.filter(h => h.time >= cutoff)
     
     // Downsample for rendering performance — max ~400 points on the chart
@@ -727,7 +729,7 @@ function UniswapWidget({ ggxAddress }: { ggxAddress: string }) {
           border: 'none',
           width: '125%',
           height: '760px',
-          transform: 'scale(0.77)',
+          transform: 'scale(0.80)',
           transformOrigin: 'top left',
           borderRadius: '12px',
         }}
@@ -1434,45 +1436,49 @@ export default function Dashboard() {
     }
     
     // GGX price (from GGX/ETH V3 Pool)
-    // Primary: Calculate from pool balances (most reliable)
-    // Fallback: Calculate from sqrtPriceX96
+    // Primary: Calculate from sqrtPriceX96 (CORRECT for V3 pools)
+    // Fallback: Calculate from pool balances
+    // NOTE: V3 pools have concentrated liquidity, so pool balances don't accurately
+    // represent price — sqrtPriceX96 from slot0 is the reliable source.
+    // Using balances as primary caused wild spikes (e.g. 0.282) especially with
+    // 0.3% fee tier pools where LPs concentrate in tight ranges.
     let ggxPrice = 0
     let ggxPair = ''
     let ggxLpExists = false
     
-    // Method 1: Calculate from pool balances (most reliable for V3)
-    if (ggxPoolWethBal && ggxPoolGgxBal && ggxPoolWethBal > 0n && ggxPoolGgxBal > 0n) {
-      const wethInPool = parseFloat(formatUnits(ggxPoolWethBal, 18))
-      const ggxInPool = parseFloat(formatUnits(ggxPoolGgxBal, 18))
-      if (ggxInPool > 0 && wethInPool > 0) {
-        ggxPrice = wethInPool / ggxInPool  // ETH per GGX
-        ggxLpExists = true
-        ggxPair = 'ETH'
+    // Method 1: Use sqrtPriceX96 from V3 slot0 (CORRECT for V3 pools)
+    const ggxSqrtPrice = getSqrtPriceX96(ggxSlot0)
+    if (ggxSqrtPrice !== null && ggxSqrtPrice > 0n && ggxT0 && ggxT1) {
+      ggxLpExists = true
+      
+      const isGgxT0 = ggxT0.toLowerCase() === CONTRACTS.GGX.toLowerCase()
+      const pairAddr = isGgxT0 ? ggxT1 : ggxT0
+      const pairLower = pairAddr.toLowerCase()
+      
+      if (pairLower === CONTRACTS.WETH.toLowerCase()) ggxPair = 'ETH'
+      else ggxPair = 'LP'
+      
+      // Calculate price from sqrtPriceX96
+      const priceRatio = Number(ggxSqrtPrice) / Number(Q96)
+      const rawPrice = priceRatio * priceRatio
+      
+      // sqrtPriceX96 represents price of token1 in terms of token0
+      if (isGgxT0) {
+        ggxPrice = rawPrice  // ETH per GGX
+      } else {
+        ggxPrice = 1 / rawPrice  // ETH per GGX
       }
     }
     
-    // Method 2: Fallback to sqrtPriceX96 from slot0
+    // Method 2: Fallback to pool balances (NOT reliable for V3 but better than nothing)
     if (ggxPrice === 0) {
-      const ggxSqrtPrice = getSqrtPriceX96(ggxSlot0)
-      if (ggxSqrtPrice !== null && ggxSqrtPrice > 0n && ggxT0 && ggxT1) {
-        ggxLpExists = true
-        
-        const isGgxT0 = ggxT0.toLowerCase() === CONTRACTS.GGX.toLowerCase()
-        const pairAddr = isGgxT0 ? ggxT1 : ggxT0
-        const pairLower = pairAddr.toLowerCase()
-        
-        if (pairLower === CONTRACTS.WETH.toLowerCase()) ggxPair = 'ETH'
-        else ggxPair = 'LP'
-        
-        // Calculate price from sqrtPriceX96
-        const priceRatio = Number(ggxSqrtPrice) / Number(Q96)
-        const rawPrice = priceRatio * priceRatio
-        
-        // sqrtPriceX96 represents price of token1 in terms of token0
-        if (isGgxT0) {
-          ggxPrice = rawPrice  // ETH per GGX
-        } else {
-          ggxPrice = 1 / rawPrice  // ETH per GGX
+      if (ggxPoolWethBal && ggxPoolGgxBal && ggxPoolWethBal > 0n && ggxPoolGgxBal > 0n) {
+        const wethInPool = parseFloat(formatUnits(ggxPoolWethBal, 18))
+        const ggxInPool = parseFloat(formatUnits(ggxPoolGgxBal, 18))
+        if (ggxInPool > 0 && wethInPool > 0) {
+          ggxPrice = wethInPool / ggxInPool  // ETH per GGX
+          ggxLpExists = true
+          ggxPair = 'ETH'
         }
       }
     }
@@ -2071,7 +2077,7 @@ export default function Dashboard() {
                       </div>
                       {/* Time Range Buttons */}
                       <div className="flex gap-1">
-                        {(['4h', '1d', '1w'] as TimeRange[]).map((range) => (
+                        {(['4h', '1d', '1w', '2w'] as TimeRange[]).map((range) => (
                           <button
                             key={range}
                             onClick={() => setTimeRange(range)}
