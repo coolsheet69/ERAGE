@@ -729,7 +729,7 @@ function UniswapWidget({ ggxAddress }: { ggxAddress: string }) {
           border: 'none',
           width: '125%',
           height: '760px',
-          transform: 'scale(0.80)',
+          transform: 'scale(0.77)',
           transformOrigin: 'top left',
           borderRadius: '12px',
         }}
@@ -1586,39 +1586,52 @@ export default function Dashboard() {
   }, [priceEfficiencyRatio, historyLoaded, addPriceEfficiencyPoint])
   
   // Estimated GGX output for ETH zap
-  // Based on actual Uniswap price adjusted for zap efficiency
+  // Computed from the actual backing value (cost to mint 1 GGX in ETH terms)
+  // rather than from the Uniswap market price. This avoids the need for a
+  // price-efficiency fudge factor and stays accurate when GGX trades at a
+  // premium or discount on Uniswap.
   const estimatedGgxFromEth = useMemo(() => {
-    if (!inputAmount || prices.ggxPrice <= 0) return null
+    if (!inputAmount) return null
     const ethAmount = parseFloat(inputAmount)
     if (isNaN(ethAmount) || ethAmount <= 0) return null
 
-    // Start with what you'd get on Uniswap
-    const uniOutput = ethAmount / prices.ggxPrice
+    // On-chain mint tax (220 BPS = 2.2% as of v5.2; was 250 BPS / 2.5%)
+    const mintTaxBps = Number(totalTaxBps || 220)
+    const MINT_TAX_MULT = 1 - mintTaxBps / 10_000
 
     // V5 ZapContract: 0.69% ETH tax deducted before swapping
-    const ZAP_TAX = 1 - 69 / 10_000  // 0.9931
-    // Zap swap/routing efficiency — two-hop WETH→USDC→RAGE + single-hop WETH→ESHARE
-    // accounts for pool price impact and routing losses (~7% combined)
-    const ZAP_SLIPPAGE = 0.93
-    // GGX contract: 2.5% mint tax
-    const MINT_TAX = 0.975
+    const ZAP_TAX_MULT = 1 - 69 / 10_000  // 0.9931
 
-    // Combined multiplier: tax → swap slippage → mint
-    const totalEfficiency = ZAP_TAX * ZAP_SLIPPAGE * MINT_TAX
+    // Swap routing efficiency — pool fees on the two legs:
+    //   ESHARE leg: WETH→ESHARE through 1% fee pool
+    //   RAGE leg:   WETH→USDC (0.05%) → USDC→RAGE (1%) = ~1.05%
+    // Average pool fee ≈ 1.025%. Add ~0.5% for price impact on small trades.
+    const SWAP_FEE_MULT = 0.985  // ~1.5% combined routing loss
 
-    // If ratio > 1, minting gives fewer GGX per pair (each worth more)
+    // Combined multiplier: zap tax → swap fees → mint tax
+    const totalEfficiency = ZAP_TAX_MULT * SWAP_FEE_MULT * MINT_TAX_MULT
+
+    // Primary: compute from backing value (ETH cost to mint 1 GGX)
+    // This is the true "floor" — how many GGX your ETH can mint after all fees.
+    if (ggxBackingValue > 0) {
+      return (ethAmount * totalEfficiency) / ggxBackingValue
+    }
+
+    // Fallback: derive from Uniswap price adjusted by price-efficiency ratio
+    if (prices.ggxPrice <= 0) return null
+    const uniOutput = ethAmount / prices.ggxPrice
+
     if (priceEfficiencyRatio && priceEfficiencyRatio > 1) {
-      const mintRate = priceEfficiencyRatio
-      return uniOutput * totalEfficiency / mintRate
+      // GGX at premium on Uniswap → minting gives MORE than buying on Uniswap
+      return uniOutput * totalEfficiency * priceEfficiencyRatio
     } else {
       return uniOutput * totalEfficiency
     }
-  }, [inputAmount, prices.ggxPrice, priceEfficiencyRatio])
+  }, [inputAmount, prices.ggxPrice, priceEfficiencyRatio, ggxBackingValue, totalTaxBps])
 
   // ============ Auto-Slippage (v5.1) ============
-  // Baseline 11% covers the estimator's systematic under-estimate on the ETH zap
-  // path (two-hop WETH→USDC→RAGE + single-hop WETH→ESHARE; each leg eats price
-  // impact and the frontend estimator doesn't model that precisely).
+  // Baseline 11% covers on-chain execution variance on the ETH zap path
+  // (pool price movement between estimate and execution, gas timing, etc).
   // We scale UP from 11% as the trade size grows relative to the tighter of the
   // two binding liquidity pools (ESHARE/WETH on the ESHARE leg, USDC side of
   // the RAGE/USDC pool on the RAGE leg). Capped at 15%.
