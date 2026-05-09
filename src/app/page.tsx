@@ -1443,6 +1443,7 @@ export default function Dashboard() {
     // Using balances as primary caused wild spikes (e.g. 0.282) especially with
     // 0.3% fee tier pools where LPs concentrate in tight ranges.
     let ggxPrice = 0
+    let ggxPriceFromSqrt: number | null = null  // sqrt-only price, null when slot0 unavailable
     let ggxPair = ''
     let ggxLpExists = false
     
@@ -1468,12 +1469,20 @@ export default function Dashboard() {
       } else {
         ggxPrice = 1 / rawPrice  // ETH per GGX
       }
+      
+      // Capture the sqrt-only price for the price efficiency chart.
+      // This is the ONLY price source that should feed the chart in a
+      // concentrated-liquidity (0.3% fee) pool — pool-balance fallback
+      // produces wildly inaccurate prices that cause spike artifacts.
+      ggxPriceFromSqrt = ggxPrice
     }
     
     // Method 2: Fallback to pool balances (NOT reliable for V3 — only used when
     // sqrtPriceX96 is unavailable, e.g. during refetch gaps)
     // NEVER use pool-balance price for the price efficiency chart — it produces
     // wild spikes in concentrated-liquidity pools (0.3% fee tier especially).
+    // ggxPriceFromSqrt deliberately stays null in this branch so the chart
+    // skips this tick entirely instead of recording a fallback-derived spike.
     if (ggxPrice === 0) {
       if (ggxPoolWethBal && ggxPoolGgxBal && ggxPoolWethBal > 0n && ggxPoolGgxBal > 0n) {
         const wethInPool = parseFloat(formatUnits(ggxPoolWethBal, 18))
@@ -1488,6 +1497,7 @@ export default function Dashboard() {
     
     // ETH price in USD (from WETH/USDC V3 Pool) - CALCULATE FIRST for conversions
     let ethPriceUsd = 0
+    let ethPriceUsdFromSqrt: number | null = null  // sqrt-only, null when slot0 unavailable
 
     // Method 1: Use sqrtPriceX96 from V3 slot0 (CORRECT for V3 pools)
     // V3 pools have concentrated liquidity, so pool balances don't accurately represent price
@@ -1511,6 +1521,11 @@ export default function Dashboard() {
         // rawPrice = WETH_wei per USDC_micro
         // To get ETH price: 10^12 / rawPrice
         ethPriceUsd = decimalAdjustment / rawPrice
+      }
+      
+      // Capture sqrt-only ETH price for chart use (only if in sane range)
+      if (ethPriceUsd >= 100 && ethPriceUsd <= 10000) {
+        ethPriceUsdFromSqrt = ethPriceUsd
       }
     }
 
@@ -1537,7 +1552,7 @@ export default function Dashboard() {
     // GGX price in USD
     const ggxPriceUsd = ggxPrice * ethPriceUsd
     
-    return { ragePrice, ragePair, ragePriceInUsdc, esharePrice, esharePair, ggxPrice, ggxPair, ggxPriceUsd, ethPriceUsd, rageLpExists, eshareLpExists, ggxLpExists }
+    return { ragePrice, ragePair, ragePriceInUsdc, esharePrice, esharePair, ggxPrice, ggxPriceFromSqrt, ggxPair, ggxPriceUsd, ethPriceUsd, ethPriceUsdFromSqrt, rageLpExists, eshareLpExists, ggxLpExists }
   }, [rageSlot0, rageLiquidity, rageT0, rageT1, eshareSlot0, eshareLiquidity, eshareT0, eshareT1, ggxSlot0, ggxLiquidity, ggxT0, ggxT1, ggxPoolWethBal, ggxPoolGgxBal, wethUsdcSlot0, wethUsdcT0, wethUsdcPoolWethBal, wethUsdcPoolUsdcBal])
   
   // Calculate GGX theoretical backing value in USD directly
@@ -1571,38 +1586,47 @@ export default function Dashboard() {
   // Calculate price efficiency ratio (Uniswap vs Mint)
   // When < 1: Buy on Uniswap (cheaper than mint)
   // When > 1: Mint is better (Uniswap has premium)
+  //
+  // CRITICAL: This MUST use sqrt-only prices (ggxPriceFromSqrt, ethPriceUsdFromSqrt).
+  // The pool-balance fallback in `prices.ggxPrice` produces wildly inaccurate prices
+  // in concentrated-liquidity 0.3% pools (e.g. 0.288 when real ratio is ~1.0). The
+  // 2400 ETH-price fallback would also distort the ratio. When either sqrt source
+  // is unavailable (RPC refetch gap), we return null and skip this tick entirely.
   const priceEfficiencyRatio = useMemo(() => {
-    if (prices.ggxPrice <= 0 || ggxBackingValueUsd <= 0) return null
+    if (prices.ggxPriceFromSqrt === null || prices.ggxPriceFromSqrt <= 0) return null
+    if (prices.ethPriceUsdFromSqrt === null || prices.ethPriceUsdFromSqrt <= 0) return null
+    if (ggxBackingValueUsd <= 0) return null
     
-    // Calculate GGX price in USD
-    const ggxPriceUsd = prices.ggxPrice * prices.ethPriceUsd
+    // Calculate GGX price in USD using sqrt-only sources
+    const ggxPriceUsd = prices.ggxPriceFromSqrt * prices.ethPriceUsdFromSqrt
     
     // Ratio = Uniswap price / backing value (both in USD)
     return ggxPriceUsd / ggxBackingValueUsd
-  }, [prices.ggxPrice, prices.ethPriceUsd, ggxBackingValueUsd])
+  }, [prices.ggxPriceFromSqrt, prices.ethPriceUsdFromSqrt, ggxBackingValueUsd])
   
   // Track price efficiency history for the chart
   // Data persisted via useChartHistory hook — survives page.tsx updates
   //
   // ANTI-SPIKE FILTER (confirmation window):
-  // When queryClient.invalidateQueries() fires, contract reads momentarily return
-  // stale/undefined data. In a 0.3% fee V3 pool with concentrated liquidity, the
-  // pool-balance fallback then produces wildly inaccurate prices, causing ratio
-  // spikes (e.g. 0.288 when normal is ~1.0).
+  // Even with sqrt-only pricing, defensive filtering catches edge cases. When a
+  // reading deviates >25% from the last confirmed value, hold it as "pending"
+  // instead of recording it. On the NEXT reading:
+  //   - If the next reading also deviates from baseline AND agrees with the
+  //     pending value (within 5%), the move is real → record both.
+  //   - If the next reading snaps back near the last confirmed value, OR if
+  //     the two pending readings disagree with each other, both were artifacts
+  //     → discard.
   //
-  // Strategy: if a reading deviates >25% from the last confirmed value, hold it
-  // as "pending" instead of recording it. On the NEXT reading:
-  //   - If the next reading is ALSO deviated from the last confirmed value,
-  //     the move is real → record both (even if they differ from each other,
-  //     e.g. crash then bounce — both are part of a real move).
-  //   - If the next reading snaps back near the last confirmed value,
-  //     the pending was a stale-RPC artifact → discard it.
+  // The "agreement" check is what fixes the old filter: two unrelated RPC
+  // artifacts (e.g. 0.288 then 0.295) both deviate from baseline but disagree
+  // with each other beyond what a real price move would produce in a few seconds.
   const lastGoodRatioRef = useRef<number | null>(null)
   const pendingRatioRef = useRef<{ value: number; time: number } | null>(null)
   useEffect(() => {
     if (!historyLoaded || priceEfficiencyRatio === null || priceEfficiencyRatio <= 0) return
 
     const MAX_DEVIATION = 0.25  // 25% threshold to detect anomaly
+    const PENDING_AGREEMENT = 0.05  // pending readings must agree within 5% to be "real"
     const last = lastGoodRatioRef.current
     const pending = pendingRatioRef.current
 
@@ -1619,12 +1643,19 @@ export default function Dashboard() {
       lastGoodRatioRef.current = priceEfficiencyRatio
       addPriceEfficiencyPoint(priceEfficiencyRatio)
     } else if (pending) {
-      // Second consecutive deviation from the old baseline — this is a REAL move.
-      // Both readings confirm the price has left the old level, regardless of how
-      // much they differ from each other (crash → partial bounce is still real).
-      addPriceEfficiencyPoint(pending.value)
-      lastGoodRatioRef.current = priceEfficiencyRatio
-      addPriceEfficiencyPoint(priceEfficiencyRatio)
+      // Two readings in a row deviate from old baseline. Only treat as a real
+      // move if they roughly AGREE with each other. Real price moves produce
+      // consecutive readings within ~1–2% of each other; uncorrelated RPC
+      // artifacts will not.
+      const pendingAgrees =
+        Math.abs(priceEfficiencyRatio - pending.value) / pending.value < PENDING_AGREEMENT
+      if (pendingAgrees) {
+        addPriceEfficiencyPoint(pending.value)
+        lastGoodRatioRef.current = priceEfficiencyRatio
+        addPriceEfficiencyPoint(priceEfficiencyRatio)
+      }
+      // If they disagree, both are likely artifacts — discard without recording
+      // and without updating lastGoodRatioRef (so we wait for a clean reading).
       pendingRatioRef.current = null
     } else {
       // First deviation — hold as pending, don't record yet
