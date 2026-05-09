@@ -1470,7 +1470,10 @@ export default function Dashboard() {
       }
     }
     
-    // Method 2: Fallback to pool balances (NOT reliable for V3 but better than nothing)
+    // Method 2: Fallback to pool balances (NOT reliable for V3 — only used when
+    // sqrtPriceX96 is unavailable, e.g. during refetch gaps)
+    // NEVER use pool-balance price for the price efficiency chart — it produces
+    // wild spikes in concentrated-liquidity pools (0.3% fee tier especially).
     if (ggxPrice === 0) {
       if (ggxPoolWethBal && ggxPoolGgxBal && ggxPoolWethBal > 0n && ggxPoolGgxBal > 0n) {
         const wethInPool = parseFloat(formatUnits(ggxPoolWethBal, 18))
@@ -1580,9 +1583,53 @@ export default function Dashboard() {
   
   // Track price efficiency history for the chart
   // Data persisted via useChartHistory hook — survives page.tsx updates
+  //
+  // ANTI-SPIKE FILTER (confirmation window):
+  // When queryClient.invalidateQueries() fires, contract reads momentarily return
+  // stale/undefined data. In a 0.3% fee V3 pool with concentrated liquidity, the
+  // pool-balance fallback then produces wildly inaccurate prices, causing ratio
+  // spikes (e.g. 0.288 when normal is ~1.0).
+  //
+  // Strategy: if a reading deviates >25% from the last confirmed value, hold it
+  // as "pending" instead of recording it. On the NEXT reading:
+  //   - If the next reading is ALSO deviated from the last confirmed value,
+  //     the move is real → record both (even if they differ from each other,
+  //     e.g. crash then bounce — both are part of a real move).
+  //   - If the next reading snaps back near the last confirmed value,
+  //     the pending was a stale-RPC artifact → discard it.
+  const lastGoodRatioRef = useRef<number | null>(null)
+  const pendingRatioRef = useRef<{ value: number; time: number } | null>(null)
   useEffect(() => {
     if (!historyLoaded || priceEfficiencyRatio === null || priceEfficiencyRatio <= 0) return
-    addPriceEfficiencyPoint(priceEfficiencyRatio)
+
+    const MAX_DEVIATION = 0.25  // 25% threshold to detect anomaly
+    const last = lastGoodRatioRef.current
+    const pending = pendingRatioRef.current
+
+    // Is this reading a wild deviation from the last confirmed value?
+    const isDeviation = last !== null && Math.abs(priceEfficiencyRatio - last) / last > MAX_DEVIATION
+
+    if (!isDeviation) {
+      // Normal reading — within expected range of last confirmed value
+      if (pending) {
+        // We had a pending outlier. The current normal reading means the pending
+        // was a transient artifact (stale RPC data) — discard it.
+        pendingRatioRef.current = null
+      }
+      lastGoodRatioRef.current = priceEfficiencyRatio
+      addPriceEfficiencyPoint(priceEfficiencyRatio)
+    } else if (pending) {
+      // Second consecutive deviation from the old baseline — this is a REAL move.
+      // Both readings confirm the price has left the old level, regardless of how
+      // much they differ from each other (crash → partial bounce is still real).
+      addPriceEfficiencyPoint(pending.value)
+      lastGoodRatioRef.current = priceEfficiencyRatio
+      addPriceEfficiencyPoint(priceEfficiencyRatio)
+      pendingRatioRef.current = null
+    } else {
+      // First deviation — hold as pending, don't record yet
+      pendingRatioRef.current = { value: priceEfficiencyRatio, time: Date.now() }
+    }
   }, [priceEfficiencyRatio, historyLoaded, addPriceEfficiencyPoint])
   
   // Estimated GGX output for ETH zap
