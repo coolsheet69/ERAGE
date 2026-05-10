@@ -1198,10 +1198,15 @@ export default function Dashboard() {
         }
       }
 
-      // Must have at least 1 hour of data for a meaningful 7D rate.
-      // Bumped from 5 min (24hr-window minimum) because annualizing tiny growth
-      // over <1hr produces noisy results when projected to 7-day scale.
-      const minDataAge = 60 * 60 * 1000
+      // Must have at least 24 hours of data for a meaningful 7D rate.
+      // Annualizing growth over a window much smaller than the rate's nominal
+      // period produces wildly noisy numbers — e.g., a tiny 0.001% growth over
+      // 10 minutes annualizes to ~4500% APR because the formula multiplies by
+      // (365 days / 10 minutes) ≈ 52,000. The "Live APR" version of this code
+      // tolerated 5-minute windows for that reason. For a 7D APR we want
+      // genuinely smoothed signal, so require at least a full day before
+      // displaying anything. Below 24hr → return null → UI shows "—".
+      const minDataAge = 24 * 60 * 60 * 1000
       if (useEntry && now - useEntry.time >= minDataAge) {
         const currentVal = currentRatio
         const pastVal = useEntry.ratio
@@ -1294,23 +1299,48 @@ export default function Dashboard() {
   // the entire tracking history rather than just the last week of price action.
   const estimated30dAPR = useMemo<{ rate: number } | null>(() => {
     // Method 1: Real observed growth using ALL history, projected over 30 days
-    if (backingRatioHistory.length >= 2) {
+    if (backingRatioHistory.length >= 1) {
+      // With just 1 entry we cannot compute growth. Return null instead of
+      // falling through to lifetime methods (which fabricate 155%-style numbers
+      // from contract-launch growth divided by a hardcoded 30-day estimate).
+      if (backingRatioHistory.length < 2) {
+        return null
+      }
       const now = Date.now()
       const oldestEntry = backingRatioHistory[0]
-      if (now - oldestEntry.time >= 1 * 60 * 1000) { // at least 1 min of data
+      
+      // Require at least 24 hours of tracked data before showing a 30D rate.
+      // Annualizing tiny growth over a few minutes produces nonsense (the
+      // 7D APR equivalent showed 4671% with 10 minutes of data).
+      const minDataAge = 24 * 60 * 60 * 1000
+      if (now - oldestEntry.time >= minDataAge) {
         const pastVal = oldestEntry.ratio
-        if (pastVal > 0 && currentRatio > pastVal) {
+        if (pastVal > 0) {
+          // currentRatio === pastVal → no growth → 0% APR (DO NOT fall through
+          // to lifetime methods, which would fabricate a misleading rate).
+          // currentRatio < pastVal should not happen (backing ratio is monotonic).
+          if (currentRatio <= pastVal) {
+            return { rate: 0 }
+          }
           const growthRate = (currentRatio - pastVal) / pastVal
           // Scale observed growth to 30 days regardless of actual tracking time
           const hoursElapsed = (now - oldestEntry.time) / (60 * 60 * 1000)
           const growthPer30Days = growthRate * (720 / hoursElapsed) // 720 hrs = 30 days
           const annualizedRate = growthPer30Days * (365 / 30) * 100
-          if (annualizedRate > 0 && annualizedRate <= 99999) {
+          if (annualizedRate >= 0 && annualizedRate <= 99999) {
             return { rate: annualizedRate }
           }
         }
       }
+      
+      // Method 1 had history but couldn't produce a rate (insufficient elapsed
+      // time, or other gate failed). Return null instead of fabricating a
+      // number from lifetime data.
+      return null
     }
+
+    // Fall through to lifetime-based methods ONLY when we have ZERO usable
+    // backing history (fresh page, no prior data, just-deleted DB).
 
     // Method 2: ggxPerPair ratchet floor — always 30-day assumption
     if (ggxPerPair) {
