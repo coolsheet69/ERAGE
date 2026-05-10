@@ -1699,111 +1699,89 @@ export default function Dashboard() {
   // Track price efficiency history for the chart
   // Data persisted via useChartHistory hook — survives page.tsx updates
   //
-  // ANTI-SPIKE FILTER (rolling confirmation, 3-sample agreement):
-  // 
-  // Even with sqrt-only pricing on both sides of the ratio, spikes can still
-  // occur from TEMPORAL MISALIGNMENT: backingRatio refetches on a different
-  // schedule than ESHARE/RAGE/GGX slot0 reads, so during high activity the
-  // numerator and denominator can briefly reflect different on-chain moments,
-  // producing transient ratio jumps that resolve within 1–2 ticks.
+  // FILTER STRATEGY (hard bounds + median):
   //
-  // Strategy: when a reading deviates >25% from the last confirmed value, hold
-  // it as pending and require TWO MORE consecutive readings that all agree
-  // within 2% of each other before recording. Real price moves produce stable
-  // consecutive readings; temporal-mismatch artifacts resolve in 1–2 ticks
-  // and won't sustain a tight 3-sample agreement.
-  const lastGoodRatioRef = useRef<number | null>(null)
-  const pendingRef = useRef<{ values: number[] } | null>(null)
+  // Previous filters tried to be clever about distinguishing "real moves" from
+  // "artifacts" by waiting for confirmation. That failed because the bug we
+  // were chasing produces a DETERMINISTIC bad value (~0.287, repeated to 4
+  // decimal places). Multiple consecutive reads of the same bad value passed
+  // the "agreement" check and got recorded.
+  //
+  // New approach is dumb but bulletproof:
+  //   1. Hard bounds: reject anything outside [0.5, 2.0]. Real GGX backing-vs-
+  //      Uniswap ratios live near 1.0 in practice — even during severe market
+  //      dislocations they won't reach 0.5 or 2.0. Anything outside is, by
+  //      definition, a computation bug.
+  //   2. Median deviation: reject anything more than 15% from the median of
+  //      the last 5 recorded readings. This catches the residual edge cases
+  //      where a real-looking value (in [0.5, 2.0]) is still anomalous given
+  //      the recent trajectory.
+  //   3. Always log rejected readings to the console as REJECTED_RATIO with
+  //      the inputs, so we can diagnose the root cause from real captured
+  //      data instead of guessing.
+  const recentReadingsRef = useRef<number[]>([])
   useEffect(() => {
     if (!historyLoaded || priceEfficiencyRatio === null || priceEfficiencyRatio <= 0) return
 
-    const MAX_DEVIATION = 0.25  // 25% from last good = anomaly threshold
-    const PENDING_AGREEMENT = 0.02  // pending readings must agree within 2%
-    const REQUIRED_CONFIRMATIONS = 3  // need 3 consecutive agreeing readings
-    const last = lastGoodRatioRef.current
-    const pending = pendingRef.current
+    const HARD_MIN = 0.5
+    const HARD_MAX = 2.0
+    const MEDIAN_DEVIATION_LIMIT = 0.15
+    const RECENT_WINDOW = 5
 
-    const isDeviation = last !== null && Math.abs(priceEfficiencyRatio - last) / last > MAX_DEVIATION
-
-    // ===== DIAGNOSTIC LOGGING =====
-    // Fires only when a spike is detected (deviation >25% from last good value).
-    // Open browser dev console → Console tab → filter for "SPIKE_DEBUG" to see
-    // exactly which input is misbehaving. Remove this block once spikes are
-    // diagnosed and resolved.
-    if (isDeviation) {
+    // ----- Hard bounds check -----
+    if (priceEfficiencyRatio < HARD_MIN || priceEfficiencyRatio > HARD_MAX) {
+      // Always log rejections so we can diagnose the bug source from real data.
       const backingRatioRaw = backingRatio
         ? [backingRatio[0]?.toString(), backingRatio[1]?.toString()]
         : null
       // eslint-disable-next-line no-console
-      console.log('SPIKE_DEBUG', {
+      console.warn('REJECTED_RATIO (hard bounds)', {
         timestamp: new Date().toISOString(),
         ratio: priceEfficiencyRatio,
-        lastGood: last,
-        deviationPct: last ? ((priceEfficiencyRatio - last) / last * 100).toFixed(2) + '%' : 'n/a',
-        // Numerator inputs:
         ggxPriceFromSqrt: prices.ggxPriceFromSqrt,
         ethPriceUsdFromSqrt: prices.ethPriceUsdFromSqrt,
-        numeratorUsd: prices.ggxPriceFromSqrt && prices.ethPriceUsdFromSqrt
-          ? prices.ggxPriceFromSqrt * prices.ethPriceUsdFromSqrt
-          : null,
-        // Denominator inputs:
-        backingValueUsd: ggxBackingValueUsdFromSqrt,
         esharePriceFromSqrt: prices.esharePriceFromSqrt,
         ragePriceFromSqrt: prices.ragePriceFromSqrt,
         ragePriceInUsdc: prices.ragePriceInUsdc,
+        backingValueUsd: ggxBackingValueUsdFromSqrt,
         backingRatioOnChain: backingRatioRaw,
-        // Compare regular vs sqrt-only — large gap = mismatched data sources:
-        ggxPriceRegular: prices.ggxPrice,
-        ethPriceUsdRegular: prices.ethPriceUsd,
       })
-    }
-    // ===== END DIAGNOSTIC LOGGING =====
-
-    if (!isDeviation) {
-      // Normal reading: clear any pending anomaly (it was transient)
-      if (pending) pendingRef.current = null
-      lastGoodRatioRef.current = priceEfficiencyRatio
-      addPriceEfficiencyPoint(priceEfficiencyRatio)
       return
     }
 
-    // Deviation from last good. Add to pending bucket.
-    if (!pending) {
-      pendingRef.current = { values: [priceEfficiencyRatio] }
-      return
+    // ----- Median deviation check -----
+    const recent = recentReadingsRef.current
+    if (recent.length >= 3) {
+      const sorted = [...recent].sort((a, b) => a - b)
+      const median = sorted[Math.floor(sorted.length / 2)]
+      const deviationFromMedian = Math.abs(priceEfficiencyRatio - median) / median
+      if (deviationFromMedian > MEDIAN_DEVIATION_LIMIT) {
+        // eslint-disable-next-line no-console
+        console.warn('REJECTED_RATIO (median deviation)', {
+          timestamp: new Date().toISOString(),
+          ratio: priceEfficiencyRatio,
+          recentMedian: median,
+          deviationPct: (deviationFromMedian * 100).toFixed(2) + '%',
+          recentReadings: [...recent],
+        })
+        return
+      }
     }
 
-    // Check if this reading agrees with the running pending median
-    const median = [...pending.values].sort((a, b) => a - b)[Math.floor(pending.values.length / 2)]
-    const agreesWithPending = Math.abs(priceEfficiencyRatio - median) / median < PENDING_AGREEMENT
-
-    if (!agreesWithPending) {
-      // Disagreement → likely artifact; reset pending with this new value alone
-      pendingRef.current = { values: [priceEfficiencyRatio] }
-      return
-    }
-
-    // Agrees with pending. Add it.
-    pending.values.push(priceEfficiencyRatio)
-
-    if (pending.values.length >= REQUIRED_CONFIRMATIONS) {
-      // Confirmed real move — record all pending values in order
-      for (const v of pending.values) addPriceEfficiencyPoint(v)
-      lastGoodRatioRef.current = priceEfficiencyRatio
-      pendingRef.current = null
-    }
+    // ----- Accept the reading -----
+    recent.push(priceEfficiencyRatio)
+    if (recent.length > RECENT_WINDOW) recent.shift()
+    addPriceEfficiencyPoint(priceEfficiencyRatio)
   }, [
     priceEfficiencyRatio,
     historyLoaded,
     addPriceEfficiencyPoint,
-    // For diagnostic logging only — these are read inside the effect when a spike fires:
+    // For diagnostic logging only — read inside effect when a rejection fires:
     prices.ggxPriceFromSqrt,
     prices.ethPriceUsdFromSqrt,
     prices.esharePriceFromSqrt,
     prices.ragePriceFromSqrt,
     prices.ragePriceInUsdc,
-    prices.ggxPrice,
-    prices.ethPriceUsd,
     ggxBackingValueUsdFromSqrt,
     backingRatio,
   ])
