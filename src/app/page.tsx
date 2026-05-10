@@ -1148,24 +1148,44 @@ export default function Dashboard() {
     if (backingRatioHistory.length >= 2) {
       const now = Date.now()
       const oneDayAgo = now - 24 * 60 * 60 * 1000
+      const HOUR = 60 * 60 * 1000
 
-      // Find the closest entry to exactly 24hr ago
-      const pastEntry = backingRatioHistory.reduce((best, entry) => {
-        const diff = Math.abs(entry.time - oneDayAgo)
-        const bestDiff = Math.abs(best.time - oneDayAgo)
-        return diff < bestDiff ? entry : best
-      })
+      // Only consider entries within ±2hr of the 24hr-ago target. This prevents
+      // the APR from getting "stuck" on a stale entry from 30+ hours ago when
+      // there's a gap in history near the 24hr mark — which would lock the rate
+      // in place because reduce() always picks the same closest entry.
+      const candidates = backingRatioHistory.filter(
+        (e) => Math.abs(e.time - oneDayAgo) <= 2 * HOUR
+      )
 
-      // LIVE APR: Always prefer the 24hr-ago entry — this makes it responsive to
-      // the last day of price action. Only fall back to the oldest entry if we
-      // have less than 24hr of data.
-      const oldestEntry = backingRatioHistory[0]
-      const have24hrData = (now - oldestEntry.time) >= 24 * 60 * 60 * 1000
-      const useEntry = have24hrData ? pastEntry : oldestEntry
+      let useEntry: { time: number; ratio: number } | null = null
+      if (candidates.length > 0) {
+        // Pick the closest within the ±2hr window
+        useEntry = candidates.reduce((best, entry) =>
+          Math.abs(entry.time - oneDayAgo) < Math.abs(best.time - oneDayAgo) ? entry : best
+        )
+      } else {
+        // No entry within the 24hr ±2hr window. Two cases:
+        //  (a) We have <22hr of total history → use oldest entry, scale appropriately
+        //  (b) We have ≥22hr of history but a gap straddles the 24hr mark → use
+        //      the most recent entry that is at least 2hr old, so we still report
+        //      a meaningful short-window rate instead of a stuck stale one.
+        const oldestEntry = backingRatioHistory[0]
+        const oldestAgeHours = (now - oldestEntry.time) / HOUR
+        if (oldestAgeHours < 22) {
+          useEntry = oldestEntry
+        } else {
+          // Find most recent entry that's at least 2hr old (well-defined growth window)
+          const recentEnough = [...backingRatioHistory]
+            .reverse()
+            .find((e) => now - e.time >= 2 * HOUR)
+          useEntry = recentEnough ?? oldestEntry
+        }
+      }
 
       // Must have at least 5 minutes of data for a meaningful rate
       const minDataAge = 5 * 60 * 1000
-      if (now - useEntry.time >= minDataAge) {
+      if (useEntry && now - useEntry.time >= minDataAge) {
         const currentVal = currentRatio
         const pastVal = useEntry.ratio
         const minutesElapsed = Math.round((now - useEntry.time) / (60 * 1000))
@@ -1655,61 +1675,114 @@ export default function Dashboard() {
   // Track price efficiency history for the chart
   // Data persisted via useChartHistory hook — survives page.tsx updates
   //
-  // ANTI-SPIKE FILTER (confirmation window):
-  // Even with sqrt-only pricing, defensive filtering catches edge cases. When a
-  // reading deviates >25% from the last confirmed value, hold it as "pending"
-  // instead of recording it. On the NEXT reading:
-  //   - If the next reading also deviates from baseline AND agrees with the
-  //     pending value (within 5%), the move is real → record both.
-  //   - If the next reading snaps back near the last confirmed value, OR if
-  //     the two pending readings disagree with each other, both were artifacts
-  //     → discard.
+  // ANTI-SPIKE FILTER (rolling confirmation, 3-sample agreement):
+  // 
+  // Even with sqrt-only pricing on both sides of the ratio, spikes can still
+  // occur from TEMPORAL MISALIGNMENT: backingRatio refetches on a different
+  // schedule than ESHARE/RAGE/GGX slot0 reads, so during high activity the
+  // numerator and denominator can briefly reflect different on-chain moments,
+  // producing transient ratio jumps that resolve within 1–2 ticks.
   //
-  // The "agreement" check is what fixes the old filter: two unrelated RPC
-  // artifacts (e.g. 0.288 then 0.295) both deviate from baseline but disagree
-  // with each other beyond what a real price move would produce in a few seconds.
+  // Strategy: when a reading deviates >25% from the last confirmed value, hold
+  // it as pending and require TWO MORE consecutive readings that all agree
+  // within 2% of each other before recording. Real price moves produce stable
+  // consecutive readings; temporal-mismatch artifacts resolve in 1–2 ticks
+  // and won't sustain a tight 3-sample agreement.
   const lastGoodRatioRef = useRef<number | null>(null)
-  const pendingRatioRef = useRef<{ value: number; time: number } | null>(null)
+  const pendingRef = useRef<{ values: number[] } | null>(null)
   useEffect(() => {
     if (!historyLoaded || priceEfficiencyRatio === null || priceEfficiencyRatio <= 0) return
 
-    const MAX_DEVIATION = 0.25  // 25% threshold to detect anomaly
-    const PENDING_AGREEMENT = 0.05  // pending readings must agree within 5% to be "real"
+    const MAX_DEVIATION = 0.25  // 25% from last good = anomaly threshold
+    const PENDING_AGREEMENT = 0.02  // pending readings must agree within 2%
+    const REQUIRED_CONFIRMATIONS = 3  // need 3 consecutive agreeing readings
     const last = lastGoodRatioRef.current
-    const pending = pendingRatioRef.current
+    const pending = pendingRef.current
 
-    // Is this reading a wild deviation from the last confirmed value?
     const isDeviation = last !== null && Math.abs(priceEfficiencyRatio - last) / last > MAX_DEVIATION
 
+    // ===== DIAGNOSTIC LOGGING =====
+    // Fires only when a spike is detected (deviation >25% from last good value).
+    // Open browser dev console → Console tab → filter for "SPIKE_DEBUG" to see
+    // exactly which input is misbehaving. Remove this block once spikes are
+    // diagnosed and resolved.
+    if (isDeviation) {
+      const backingRatioRaw = backingRatio
+        ? [backingRatio[0]?.toString(), backingRatio[1]?.toString()]
+        : null
+      // eslint-disable-next-line no-console
+      console.log('SPIKE_DEBUG', {
+        timestamp: new Date().toISOString(),
+        ratio: priceEfficiencyRatio,
+        lastGood: last,
+        deviationPct: last ? ((priceEfficiencyRatio - last) / last * 100).toFixed(2) + '%' : 'n/a',
+        // Numerator inputs:
+        ggxPriceFromSqrt: prices.ggxPriceFromSqrt,
+        ethPriceUsdFromSqrt: prices.ethPriceUsdFromSqrt,
+        numeratorUsd: prices.ggxPriceFromSqrt && prices.ethPriceUsdFromSqrt
+          ? prices.ggxPriceFromSqrt * prices.ethPriceUsdFromSqrt
+          : null,
+        // Denominator inputs:
+        backingValueUsd: ggxBackingValueUsdFromSqrt,
+        esharePriceFromSqrt: prices.esharePriceFromSqrt,
+        ragePriceFromSqrt: prices.ragePriceFromSqrt,
+        ragePriceInUsdc: prices.ragePriceInUsdc,
+        backingRatioOnChain: backingRatioRaw,
+        // Compare regular vs sqrt-only — large gap = mismatched data sources:
+        ggxPriceRegular: prices.ggxPrice,
+        ethPriceUsdRegular: prices.ethPriceUsd,
+      })
+    }
+    // ===== END DIAGNOSTIC LOGGING =====
+
     if (!isDeviation) {
-      // Normal reading — within expected range of last confirmed value
-      if (pending) {
-        // We had a pending outlier. The current normal reading means the pending
-        // was a transient artifact (stale RPC data) — discard it.
-        pendingRatioRef.current = null
-      }
+      // Normal reading: clear any pending anomaly (it was transient)
+      if (pending) pendingRef.current = null
       lastGoodRatioRef.current = priceEfficiencyRatio
       addPriceEfficiencyPoint(priceEfficiencyRatio)
-    } else if (pending) {
-      // Two readings in a row deviate from old baseline. Only treat as a real
-      // move if they roughly AGREE with each other. Real price moves produce
-      // consecutive readings within ~1–2% of each other; uncorrelated RPC
-      // artifacts will not.
-      const pendingAgrees =
-        Math.abs(priceEfficiencyRatio - pending.value) / pending.value < PENDING_AGREEMENT
-      if (pendingAgrees) {
-        addPriceEfficiencyPoint(pending.value)
-        lastGoodRatioRef.current = priceEfficiencyRatio
-        addPriceEfficiencyPoint(priceEfficiencyRatio)
-      }
-      // If they disagree, both are likely artifacts — discard without recording
-      // and without updating lastGoodRatioRef (so we wait for a clean reading).
-      pendingRatioRef.current = null
-    } else {
-      // First deviation — hold as pending, don't record yet
-      pendingRatioRef.current = { value: priceEfficiencyRatio, time: Date.now() }
+      return
     }
-  }, [priceEfficiencyRatio, historyLoaded, addPriceEfficiencyPoint])
+
+    // Deviation from last good. Add to pending bucket.
+    if (!pending) {
+      pendingRef.current = { values: [priceEfficiencyRatio] }
+      return
+    }
+
+    // Check if this reading agrees with the running pending median
+    const median = [...pending.values].sort((a, b) => a - b)[Math.floor(pending.values.length / 2)]
+    const agreesWithPending = Math.abs(priceEfficiencyRatio - median) / median < PENDING_AGREEMENT
+
+    if (!agreesWithPending) {
+      // Disagreement → likely artifact; reset pending with this new value alone
+      pendingRef.current = { values: [priceEfficiencyRatio] }
+      return
+    }
+
+    // Agrees with pending. Add it.
+    pending.values.push(priceEfficiencyRatio)
+
+    if (pending.values.length >= REQUIRED_CONFIRMATIONS) {
+      // Confirmed real move — record all pending values in order
+      for (const v of pending.values) addPriceEfficiencyPoint(v)
+      lastGoodRatioRef.current = priceEfficiencyRatio
+      pendingRef.current = null
+    }
+  }, [
+    priceEfficiencyRatio,
+    historyLoaded,
+    addPriceEfficiencyPoint,
+    // For diagnostic logging only — these are read inside the effect when a spike fires:
+    prices.ggxPriceFromSqrt,
+    prices.ethPriceUsdFromSqrt,
+    prices.esharePriceFromSqrt,
+    prices.ragePriceFromSqrt,
+    prices.ragePriceInUsdc,
+    prices.ggxPrice,
+    prices.ethPriceUsd,
+    ggxBackingValueUsdFromSqrt,
+    backingRatio,
+  ])
   
   // Estimated GGX output for ETH zap
   // Computed from the actual backing value (cost to mint 1 GGX in ETH terms)
