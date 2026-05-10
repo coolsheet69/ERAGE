@@ -1357,6 +1357,7 @@ export default function Dashboard() {
     
     // RAGE price (from RAGE/USDC V3 Pool - need to convert to ETH)
     let ragePrice = 0
+    let ragePriceFromSqrt: number | null = null  // sqrt-only, for chart use
     let ragePair = ''
     let rageLpExists = false
     let ragePriceInUsdc = false  // Flag to track if price is in USDC
@@ -1403,11 +1404,17 @@ export default function Dashboard() {
           // rawPrice = token1 per RAGE (in smallest units)
           ragePrice = rawPrice / decimalAdjustment
         }
+        
+        // Capture sqrt-only price for chart denominator. Stays null if any
+        // dependency was missing (slot0/liquidity/t0/t1) so the chart skips
+        // ticks where we can't trust the backing-value computation.
+        if (ragePrice > 0) ragePriceFromSqrt = ragePrice
       }
     }
     
     // ESHARE price (from ESHARE/ETH V3 Pool)
     let esharePrice = 0
+    let esharePriceFromSqrt: number | null = null  // sqrt-only, for chart use
     let esharePair = ''
     let eshareLpExists = false
     const eshareSqrtPrice = getSqrtPriceX96(eshareSlot0)
@@ -1432,6 +1439,9 @@ export default function Dashboard() {
         } else {
           esharePrice = 1 / rawPrice
         }
+        
+        // Capture sqrt-only price for chart denominator
+        if (esharePrice > 0) esharePriceFromSqrt = esharePrice
       }
     }
     
@@ -1552,7 +1562,7 @@ export default function Dashboard() {
     // GGX price in USD
     const ggxPriceUsd = ggxPrice * ethPriceUsd
     
-    return { ragePrice, ragePair, ragePriceInUsdc, esharePrice, esharePair, ggxPrice, ggxPriceFromSqrt, ggxPair, ggxPriceUsd, ethPriceUsd, ethPriceUsdFromSqrt, rageLpExists, eshareLpExists, ggxLpExists }
+    return { ragePrice, ragePriceFromSqrt, ragePair, ragePriceInUsdc, esharePrice, esharePriceFromSqrt, esharePair, ggxPrice, ggxPriceFromSqrt, ggxPair, ggxPriceUsd, ethPriceUsd, ethPriceUsdFromSqrt, rageLpExists, eshareLpExists, ggxLpExists }
   }, [rageSlot0, rageLiquidity, rageT0, rageT1, eshareSlot0, eshareLiquidity, eshareT0, eshareT1, ggxSlot0, ggxLiquidity, ggxT0, ggxT1, ggxPoolWethBal, ggxPoolGgxBal, wethUsdcSlot0, wethUsdcT0, wethUsdcPoolWethBal, wethUsdcPoolUsdcBal])
   
   // Calculate GGX theoretical backing value in USD directly
@@ -1583,26 +1593,64 @@ export default function Dashboard() {
     return ggxBackingValueUsd / prices.ethPriceUsd
   }, [ggxBackingValueUsd, prices.ethPriceUsd])
   
+  // Sqrt-only backing value — for the price efficiency chart ONLY.
+  // Returns null if ANY price input is unavailable from sqrt sources, so the
+  // chart skips ticks where the denominator can't be trusted. Mirrors
+  // ggxBackingValueUsd structure but with strict null propagation.
+  const ggxBackingValueUsdFromSqrt = useMemo<number | null>(() => {
+    if (!backingRatio) return null
+    if (prices.esharePriceFromSqrt === null || prices.esharePriceFromSqrt <= 0) return null
+    if (prices.ragePriceFromSqrt === null || prices.ragePriceFromSqrt <= 0) return null
+    if (prices.ethPriceUsdFromSqrt === null || prices.ethPriceUsdFromSqrt <= 0) return null
+    
+    const [esharePer, ragePer] = backingRatio
+    
+    // ESHARE is paired with ETH, so convert to USD via sqrt-only ETH price
+    const eshareValueUsd =
+      parseFloat(formatUnits(esharePer, 18)) *
+      prices.esharePriceFromSqrt *
+      prices.ethPriceUsdFromSqrt
+    
+    // RAGE: if paired with USDC, price is already in USD; else convert via ETH
+    let rageValueUsd: number
+    if (prices.ragePriceInUsdc) {
+      rageValueUsd = parseFloat(formatUnits(ragePer, 18)) * prices.ragePriceFromSqrt
+    } else {
+      rageValueUsd =
+        parseFloat(formatUnits(ragePer, 18)) *
+        prices.ragePriceFromSqrt *
+        prices.ethPriceUsdFromSqrt
+    }
+    
+    const total = eshareValueUsd + rageValueUsd
+    return total > 0 ? total : null
+  }, [backingRatio, prices.esharePriceFromSqrt, prices.ragePriceFromSqrt, prices.ragePriceInUsdc, prices.ethPriceUsdFromSqrt])
+  
   // Calculate price efficiency ratio (Uniswap vs Mint)
   // When < 1: Buy on Uniswap (cheaper than mint)
   // When > 1: Mint is better (Uniswap has premium)
   //
-  // CRITICAL: This MUST use sqrt-only prices (ggxPriceFromSqrt, ethPriceUsdFromSqrt).
-  // The pool-balance fallback in `prices.ggxPrice` produces wildly inaccurate prices
-  // in concentrated-liquidity 0.3% pools (e.g. 0.288 when real ratio is ~1.0). The
-  // 2400 ETH-price fallback would also distort the ratio. When either sqrt source
-  // is unavailable (RPC refetch gap), we return null and skip this tick entirely.
+  // CRITICAL: BOTH numerator AND denominator must use sqrt-only prices.
+  // The earlier fix sanitized only the numerator (ggxPriceFromSqrt), but the
+  // denominator (ggxBackingValueUsd) still used prices.ethPriceUsd which can
+  // fall back to 2400, AND used regular esharePrice/ragePrice which silently
+  // become 0 during refetch gaps. This created mismatched ETH price scaling
+  // between the two halves of the ratio, producing 0.288-style spike artifacts
+  // during high-trading-activity periods (which trigger more refetches).
+  // 
+  // Now both halves use sqrt-only sources; if any are unavailable, return null
+  // and the chart skips the tick entirely.
   const priceEfficiencyRatio = useMemo(() => {
     if (prices.ggxPriceFromSqrt === null || prices.ggxPriceFromSqrt <= 0) return null
     if (prices.ethPriceUsdFromSqrt === null || prices.ethPriceUsdFromSqrt <= 0) return null
-    if (ggxBackingValueUsd <= 0) return null
+    if (ggxBackingValueUsdFromSqrt === null || ggxBackingValueUsdFromSqrt <= 0) return null
     
     // Calculate GGX price in USD using sqrt-only sources
     const ggxPriceUsd = prices.ggxPriceFromSqrt * prices.ethPriceUsdFromSqrt
     
-    // Ratio = Uniswap price / backing value (both in USD)
-    return ggxPriceUsd / ggxBackingValueUsd
-  }, [prices.ggxPriceFromSqrt, prices.ethPriceUsdFromSqrt, ggxBackingValueUsd])
+    // Ratio = Uniswap price / backing value (both in USD, both sqrt-only)
+    return ggxPriceUsd / ggxBackingValueUsdFromSqrt
+  }, [prices.ggxPriceFromSqrt, prices.ethPriceUsdFromSqrt, ggxBackingValueUsdFromSqrt])
   
   // Track price efficiency history for the chart
   // Data persisted via useChartHistory hook — survives page.tsx updates
