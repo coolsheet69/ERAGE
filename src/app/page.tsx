@@ -1145,6 +1145,13 @@ export default function Dashboard() {
   // not an average over the entire tracking period.
   const estimatedAPR = useMemo<{ rate: number; minutesElapsed: number } | null>(() => {
     // ===== Method 1: Real observed growth — 24hr rolling window =====
+    //
+    // CRITICAL: This method is the SOURCE OF TRUTH for Live APR. It must either
+    // return a real 24hr-derived rate OR return 0 (no growth observed). It must
+    // NOT fall through to Methods 2/3 when growth is flat or negative — those
+    // compute lifetime rates and would falsely inflate "Live APR" to look like
+    // a 24hr rate (e.g. lifetime 13% growth ÷ 7 days × 365 = 667%, which has
+    // nothing to do with the last 24 hours).
     if (backingRatioHistory.length >= 2) {
       const now = Date.now()
       const oneDayAgo = now - 24 * 60 * 60 * 1000
@@ -1190,18 +1197,30 @@ export default function Dashboard() {
         const pastVal = useEntry.ratio
         const minutesElapsed = Math.round((now - useEntry.time) / (60 * 1000))
 
-        if (pastVal > 0 && currentVal > pastVal) {
+        if (pastVal > 0) {
+          // currentVal === pastVal → no growth → 0% APR (DO NOT fall through to
+          // lifetime methods, which would fabricate a misleading rate).
+          // currentVal < pastVal should not happen (backing ratio is monotonic),
+          // but if it does, treat as 0 to avoid negative-APR display.
+          if (currentVal <= pastVal) {
+            return { rate: 0, minutesElapsed }
+          }
+          
           // Annualize the REAL observed growth over the actual elapsed time
           const growthRate = (currentVal - pastVal) / pastVal
           const hoursElapsed = (now - useEntry.time) / (60 * 60 * 1000)
           const annualizedRate = growthRate * (24 / hoursElapsed) * 365 * 100
 
-          if (annualizedRate > 0 && annualizedRate <= 99999) {
+          if (annualizedRate >= 0 && annualizedRate <= 99999) {
             return { rate: annualizedRate, minutesElapsed }
           }
         }
       }
     }
+    
+    // Fall through to lifetime-based methods ONLY when we have insufficient
+    // history to compute a 24hr rate at all (fresh page, < 5 min of data).
+    // These are stopgap estimates, not "live" rates.
 
     // ===== Method 2: ggxPerPair ratchet floor =====
     // Use estimated elapsed time from first tracked history point
