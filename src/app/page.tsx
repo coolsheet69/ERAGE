@@ -1139,59 +1139,62 @@ export default function Dashboard() {
   // instead of the correct ~7% growth from the 2.0 starting point).
   const INITIAL_BACKING_RATIO = 2.0
 
-  // ===== Live APR — focuses on 24-hour price action =====
-  // Responsive to recent volume: spikes on high-activity days, drops on quiet days.
-  // Always prefers the 24hr-ago data point so it reflects the LAST day of price action,
-  // not an average over the entire tracking period.
+  // ===== 7D APR — focuses on rolling 7-day price action =====
+  // Smoother than a 24hr window (slow days don't drag it to 0%), but still
+  // responsive enough to reflect recent protocol activity. Uses growth between
+  // the current backing ratio and the closest history entry to 7 days ago,
+  // annualized linearly.
   const estimatedAPR = useMemo<{ rate: number; minutesElapsed: number } | null>(() => {
-    // ===== Method 1: Real observed growth — 24hr rolling window =====
+    // ===== Method 1: Real observed growth — 7-day rolling window =====
     //
-    // CRITICAL: This method is the SOURCE OF TRUTH for Live APR. It must either
-    // return a real 24hr-derived rate OR return 0 (no growth observed). It must
+    // CRITICAL: This method is the SOURCE OF TRUTH for 7D APR. It must either
+    // return a real 7-day-derived rate OR return 0 (no growth observed). It must
     // NOT fall through to Methods 2/3 when growth is flat or negative — those
-    // compute lifetime rates and would falsely inflate "Live APR" to look like
-    // a 24hr rate (e.g. lifetime 13% growth ÷ 7 days × 365 = 667%, which has
-    // nothing to do with the last 24 hours).
+    // compute lifetime rates and would falsely inflate "7D APR" to look like
+    // a rolling rate.
     if (backingRatioHistory.length >= 2) {
       const now = Date.now()
-      const oneDayAgo = now - 24 * 60 * 60 * 1000
       const HOUR = 60 * 60 * 1000
+      const sevenDaysAgo = now - 7 * 24 * HOUR
 
-      // Only consider entries within ±2hr of the 24hr-ago target. This prevents
-      // the APR from getting "stuck" on a stale entry from 30+ hours ago when
-      // there's a gap in history near the 24hr mark — which would lock the rate
-      // in place because reduce() always picks the same closest entry.
+      // Only consider entries within ±12hr of the 7-day-ago target. Wider than
+      // the 24hr window's ±2hr tolerance because at this scale, ±12hr is still
+      // <8% of the window (vs. ±2hr being ~8% of a 24hr window — same relative
+      // tolerance). Prevents the APR from getting "stuck" on a stale entry from
+      // 9+ days ago when there's a gap in history near the 7-day mark.
       const candidates = backingRatioHistory.filter(
-        (e) => Math.abs(e.time - oneDayAgo) <= 2 * HOUR
+        (e) => Math.abs(e.time - sevenDaysAgo) <= 12 * HOUR
       )
 
       let useEntry: { time: number; ratio: number } | null = null
       if (candidates.length > 0) {
-        // Pick the closest within the ±2hr window
+        // Pick the closest within the ±12hr window
         useEntry = candidates.reduce((best, entry) =>
-          Math.abs(entry.time - oneDayAgo) < Math.abs(best.time - oneDayAgo) ? entry : best
+          Math.abs(entry.time - sevenDaysAgo) < Math.abs(best.time - sevenDaysAgo) ? entry : best
         )
       } else {
-        // No entry within the 24hr ±2hr window. Two cases:
-        //  (a) We have <22hr of total history → use oldest entry, scale appropriately
-        //  (b) We have ≥22hr of history but a gap straddles the 24hr mark → use
-        //      the most recent entry that is at least 2hr old, so we still report
-        //      a meaningful short-window rate instead of a stuck stale one.
+        // No entry within the 7-day ±12hr window. Two cases:
+        //  (a) We have <6.5 days of total history → use oldest entry, scale appropriately
+        //  (b) We have ≥6.5 days of history but a gap straddles the 7-day mark → use
+        //      the most recent entry that is at least 12hr old, so we still report
+        //      a meaningful rate instead of a stuck stale one.
         const oldestEntry = backingRatioHistory[0]
         const oldestAgeHours = (now - oldestEntry.time) / HOUR
-        if (oldestAgeHours < 22) {
+        if (oldestAgeHours < 6.5 * 24) {
           useEntry = oldestEntry
         } else {
-          // Find most recent entry that's at least 2hr old (well-defined growth window)
+          // Find most recent entry that's at least 12hr old (well-defined growth window)
           const recentEnough = [...backingRatioHistory]
             .reverse()
-            .find((e) => now - e.time >= 2 * HOUR)
+            .find((e) => now - e.time >= 12 * HOUR)
           useEntry = recentEnough ?? oldestEntry
         }
       }
 
-      // Must have at least 5 minutes of data for a meaningful rate
-      const minDataAge = 5 * 60 * 1000
+      // Must have at least 1 hour of data for a meaningful 7D rate.
+      // Bumped from 5 min (24hr-window minimum) because annualizing tiny growth
+      // over <1hr produces noisy results when projected to 7-day scale.
+      const minDataAge = 60 * 60 * 1000
       if (useEntry && now - useEntry.time >= minDataAge) {
         const currentVal = currentRatio
         const pastVal = useEntry.ratio
@@ -1206,10 +1209,12 @@ export default function Dashboard() {
             return { rate: 0, minutesElapsed }
           }
           
-          // Annualize the REAL observed growth over the actual elapsed time
+          // Annualize the REAL observed growth over the actual elapsed time.
+          // For a 7-day window: growthRate × (7 / daysElapsed) × (365 / 7) × 100
+          // simplifies to: growthRate × (365 / daysElapsed) × 100
           const growthRate = (currentVal - pastVal) / pastVal
-          const hoursElapsed = (now - useEntry.time) / (60 * 60 * 1000)
-          const annualizedRate = growthRate * (24 / hoursElapsed) * 365 * 100
+          const daysElapsed = (now - useEntry.time) / (24 * HOUR)
+          const annualizedRate = growthRate * (365 / daysElapsed) * 100
 
           if (annualizedRate >= 0 && annualizedRate <= 99999) {
             return { rate: annualizedRate, minutesElapsed }
@@ -1219,8 +1224,8 @@ export default function Dashboard() {
     }
     
     // Fall through to lifetime-based methods ONLY when we have insufficient
-    // history to compute a 24hr rate at all (fresh page, < 5 min of data).
-    // These are stopgap estimates, not "live" rates.
+    // history to compute a 7-day rate at all (fresh page, < 1hr of data).
+    // These are stopgap estimates, not rolling rates.
 
     // ===== Method 2: ggxPerPair ratchet floor =====
     // Use estimated elapsed time from first tracked history point
@@ -1269,9 +1274,9 @@ export default function Dashboard() {
   }, [backingRatioHistory, currentRatio, ggxPerPair, totalMintCount, totalRedeemCount])
   
   // ===== 30-Day APR Projection =====
-  // Stable, smoothed APR — uses ALL tracked data (not just last 24hr) and projects
-  // over a 30-day period. Less volatile than Live APR because it averages over
-  // the entire tracking history rather than just the last day of price action.
+  // Stable, smoothed APR — uses ALL tracked data (not just last 7 days) and projects
+  // over a 30-day period. Less volatile than 7D APR because it averages over
+  // the entire tracking history rather than just the last week of price action.
   const estimated30dAPR = useMemo<{ rate: number } | null>(() => {
     // Method 1: Real observed growth using ALL history, projected over 30 days
     if (backingRatioHistory.length >= 2) {
@@ -2157,17 +2162,19 @@ export default function Dashboard() {
                           <div className="mt-2 pt-1.5 border-t border-white/10 space-y-1.5">
                             {estimatedAPR !== null && (
                               <div className="text-center">
-                                <p className="text-xs text-gray-400 font-medium">Live APR</p>
+                                <p className="text-xs text-gray-400 font-medium">7D APR</p>
                                 <p className="text-base font-bold flex items-center justify-center gap-1.5">
                                   <span className="text-[#10B981] animate-apr-glow" style={{ animationDuration: '0.6s' }}>~{Math.round(estimatedAPR.rate)}%</span>
                                   <span className="text-[10px] text-gray-500">
                                     {estimatedAPR.minutesElapsed === -1
                                       ? 'on-chain est.'
-                                      : estimatedAPR.minutesElapsed >= 1440
-                                        ? `24hr est.`
-                                        : estimatedAPR.minutesElapsed >= 60
-                                          ? `${(estimatedAPR.minutesElapsed / 60).toFixed(0)}hr est.`
-                                          : `${estimatedAPR.minutesElapsed}m est.`}
+                                      : estimatedAPR.minutesElapsed >= 7 * 1440
+                                        ? `7d est.`
+                                        : estimatedAPR.minutesElapsed >= 1440
+                                          ? `${Math.round(estimatedAPR.minutesElapsed / 1440)}d est.`
+                                          : estimatedAPR.minutesElapsed >= 60
+                                            ? `${Math.round(estimatedAPR.minutesElapsed / 60)}hr est.`
+                                            : `${estimatedAPR.minutesElapsed}m est.`}
                                   </span>
                                 </p>
                               </div>
