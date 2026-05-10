@@ -1152,7 +1152,14 @@ export default function Dashboard() {
     // NOT fall through to Methods 2/3 when growth is flat or negative — those
     // compute lifetime rates and would falsely inflate "7D APR" to look like
     // a rolling rate.
-    if (backingRatioHistory.length >= 2) {
+    if (backingRatioHistory.length >= 1) {
+      // With just 1 entry we cannot compute growth. Return null instead of
+      // falling through to lifetime methods (which fabricate a number from
+      // contract-launch growth divided by an arbitrary 30-day estimate).
+      // The UI shows "—" / "calculating..." until we have a usable window.
+      if (backingRatioHistory.length < 2) {
+        return null
+      }
       const now = Date.now()
       const HOUR = 60 * 60 * 1000
       const sevenDaysAgo = now - 7 * 24 * HOUR
@@ -1221,11 +1228,19 @@ export default function Dashboard() {
           }
         }
       }
+      
+      // Method 1 had data but couldn't produce a rate (insufficient elapsed
+      // time, or no usable past entry). Return null instead of falling through
+      // to lifetime methods — fabricating a number when we have actual recent
+      // history would be misleading. The UI shows "—" or similar.
+      return null
     }
     
-    // Fall through to lifetime-based methods ONLY when we have insufficient
-    // history to compute a 7-day rate at all (fresh page, < 1hr of data).
-    // These are stopgap estimates, not rolling rates.
+    // Fall through to lifetime-based methods ONLY when we have ZERO usable
+    // backing history (fresh page, no prior data, just-deleted DB). These are
+    // stopgap estimates so the UI shows something during the first few minutes
+    // of operation. Once Method 1 has 2+ entries with 1hr+ elapsed time, those
+    // become source of truth.
 
     // ===== Method 2: ggxPerPair ratchet floor =====
     // Use estimated elapsed time from first tracked history point
