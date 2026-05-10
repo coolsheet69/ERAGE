@@ -73,10 +73,15 @@ export async function GET() {
     ])
 
     // Scrub on read: drop pre-existing bad points so the chart renders clean
-    // without requiring a manual wipe. Two-pass:
-    //   1. Drop anything outside absolute sanity bounds or before retention cutoff
-    //   2. Sequentially walk forward, dropping any point that violates the
-    //      rate-of-change limit relative to the last kept point.
+    // without requiring a manual wipe.
+    //
+    // For PRICE history: two-pass — drop absolutely insane values, then walk
+    // forward sequentially and drop anything that violates rate-of-change vs.
+    // last kept point.
+    //
+    // For BACKING history: only drop absolutely insane values. Backing ratio is
+    // monotonic and grows slowly; rate-of-change checks are inappropriate and
+    // can wipe legitimate history during deploys or data migrations.
     const scrub = (
       raw: string | null,
       type: 'price' | 'backing'
@@ -87,8 +92,10 @@ export async function GET() {
       for (const p of parsed) {
         if (p.time <= cutoff) continue
         if (isAbsolutelyInsane(type, p.ratio)) continue
-        const last = cleaned[cleaned.length - 1]
-        if (last && isRateOfChangeViolation(last.ratio, p.ratio)) continue
+        if (type === 'price') {
+          const last = cleaned[cleaned.length - 1]
+          if (last && isRateOfChangeViolation(last.ratio, p.ratio)) continue
+        }
         cleaned.push(p)
       }
       return cleaned
