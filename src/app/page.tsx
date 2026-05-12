@@ -45,7 +45,8 @@ const CONTRACTS = {
   // LP Pairs for price feeds (Uniswap V3)
   RAGE_LP: '0xd474B32a5a2BF93453996287D361a00f661E04FF' as `0x${string}`,
   ESHARE_LP: '0x0656CDF4539f412F542A8D8a029f7c6c5cE90d7B' as `0x${string}`,
-  GGX_LP: '0x4a3a2fB49D1dDe37E8903E99003F74c9e53af421' as `0x${string}`,        // ERAGE-ETH V3 0.3% pool
+  GGX_LP: '0xA1C0E4ee41F1Ab7113E78fb52BB67A06a16aAcAA' as `0x${string}`,        // ERAGE-ETH V3 1% pool — used as price feed (deeper, fewer spikes; arb bots keep it aligned with the 0.3% pool)
+  GGX_LP_03: '0x4a3a2fB49D1dDe37E8903E99003F74c9e53af421' as `0x${string}`,     // ERAGE-ETH V3 0.3% pool — main trading pool, included in TVL
   GGX_RAGE_LP: '0xE9704Fdc0f184ceD4218DFafF2A302A2D59a0265' as `0x${string}`,   // GGX-RAGE V3 1% side pool
   GGX_ESHARE_LP: '0x1638378e4510FBf274a4a882c7765718359ac28A' as `0x${string}`, // GGX-ESHARE V3 1% side pool
   WETH_USDC_LP: '0x6c561b446416e1a00e8e93e221854d6ea4171372' as `0x${string}`, // WETH/USDC Uniswap V3 on Base (correct pool)
@@ -915,6 +916,18 @@ export default function Dashboard() {
   })
 
 
+  // ERAGE-ETH V3 0.3% pool — kept in TVL (main trading pool); price feed comes from the 1% pool via GGX_LP above
+  const { data: ggxPool03WethBal } = useReadContract({
+    address: CONTRACTS.WETH,
+    abi: ERC20_ABI,
+    functionName: 'balanceOf',
+    args: [CONTRACTS.GGX_LP_03],
+    query: {
+      enabled: true,
+      refetchInterval: 20000
+    }
+  })
+
   // GGX-RAGE side pool balances (for protocol TVL)
   const { data: ggxRagePoolGgxBal } = useReadContract({ address: CONTRACTS.GGX, abi: ERC20_ABI, functionName: 'balanceOf', args: [CONTRACTS.GGX_RAGE_LP], query: { refetchInterval: 20000 } })
   const { data: ggxRagePoolRageBal } = useReadContract({ address: CONTRACTS.RAGE, abi: ERC20_ABI, functionName: 'balanceOf', args: [CONTRACTS.GGX_RAGE_LP], query: { refetchInterval: 20000 } })
@@ -1446,7 +1459,6 @@ export default function Dashboard() {
     
     // RAGE price (from RAGE/USDC V3 Pool - need to convert to ETH)
     let ragePrice = 0
-    let ragePriceFromSqrt: number | null = null  // sqrt-only, for chart use
     let ragePair = ''
     let rageLpExists = false
     let ragePriceInUsdc = false  // Flag to track if price is in USDC
@@ -1493,17 +1505,11 @@ export default function Dashboard() {
           // rawPrice = token1 per RAGE (in smallest units)
           ragePrice = rawPrice / decimalAdjustment
         }
-        
-        // Capture sqrt-only price for chart denominator. Stays null if any
-        // dependency was missing (slot0/liquidity/t0/t1) so the chart skips
-        // ticks where we can't trust the backing-value computation.
-        if (ragePrice > 0) ragePriceFromSqrt = ragePrice
       }
     }
     
     // ESHARE price (from ESHARE/ETH V3 Pool)
     let esharePrice = 0
-    let esharePriceFromSqrt: number | null = null  // sqrt-only, for chart use
     let esharePair = ''
     let eshareLpExists = false
     const eshareSqrtPrice = getSqrtPriceX96(eshareSlot0)
@@ -1528,60 +1534,44 @@ export default function Dashboard() {
         } else {
           esharePrice = 1 / rawPrice
         }
-        
-        // Capture sqrt-only price for chart denominator
-        if (esharePrice > 0) esharePriceFromSqrt = esharePrice
       }
     }
     
-    // GGX price (from GGX/ETH V3 Pool)
+    // GGX price (from GGX/ETH V3 Pool — the 1% fee pool now serves as the price feed)
     // Primary: Calculate from sqrtPriceX96 (CORRECT for V3 pools)
     // Fallback: Calculate from pool balances
     // NOTE: V3 pools have concentrated liquidity, so pool balances don't accurately
     // represent price — sqrtPriceX96 from slot0 is the reliable source.
-    // Using balances as primary caused wild spikes (e.g. 0.282) especially with
-    // 0.3% fee tier pools where LPs concentrate in tight ranges.
     let ggxPrice = 0
-    let ggxPriceFromSqrt: number | null = null  // sqrt-only price, null when slot0 unavailable
     let ggxPair = ''
     let ggxLpExists = false
-    
+
     // Method 1: Use sqrtPriceX96 from V3 slot0 (CORRECT for V3 pools)
     const ggxSqrtPrice = getSqrtPriceX96(ggxSlot0)
     if (ggxSqrtPrice !== null && ggxSqrtPrice > 0n && ggxT0 && ggxT1) {
       ggxLpExists = true
-      
+
       const isGgxT0 = ggxT0.toLowerCase() === CONTRACTS.GGX.toLowerCase()
       const pairAddr = isGgxT0 ? ggxT1 : ggxT0
       const pairLower = pairAddr.toLowerCase()
-      
+
       if (pairLower === CONTRACTS.WETH.toLowerCase()) ggxPair = 'ETH'
       else ggxPair = 'LP'
-      
+
       // Calculate price from sqrtPriceX96
       const priceRatio = Number(ggxSqrtPrice) / Number(Q96)
       const rawPrice = priceRatio * priceRatio
-      
+
       // sqrtPriceX96 represents price of token1 in terms of token0
       if (isGgxT0) {
         ggxPrice = rawPrice  // ETH per GGX
       } else {
         ggxPrice = 1 / rawPrice  // ETH per GGX
       }
-      
-      // Capture the sqrt-only price for the price efficiency chart.
-      // This is the ONLY price source that should feed the chart in a
-      // concentrated-liquidity (0.3% fee) pool — pool-balance fallback
-      // produces wildly inaccurate prices that cause spike artifacts.
-      ggxPriceFromSqrt = ggxPrice
     }
-    
+
     // Method 2: Fallback to pool balances (NOT reliable for V3 — only used when
     // sqrtPriceX96 is unavailable, e.g. during refetch gaps)
-    // NEVER use pool-balance price for the price efficiency chart — it produces
-    // wild spikes in concentrated-liquidity pools (0.3% fee tier especially).
-    // ggxPriceFromSqrt deliberately stays null in this branch so the chart
-    // skips this tick entirely instead of recording a fallback-derived spike.
     if (ggxPrice === 0) {
       if (ggxPoolWethBal && ggxPoolGgxBal && ggxPoolWethBal > 0n && ggxPoolGgxBal > 0n) {
         const wethInPool = parseFloat(formatUnits(ggxPoolWethBal, 18))
@@ -1596,7 +1586,6 @@ export default function Dashboard() {
     
     // ETH price in USD (from WETH/USDC V3 Pool) - CALCULATE FIRST for conversions
     let ethPriceUsd = 0
-    let ethPriceUsdFromSqrt: number | null = null  // sqrt-only, null when slot0 unavailable
 
     // Method 1: Use sqrtPriceX96 from V3 slot0 (CORRECT for V3 pools)
     // V3 pools have concentrated liquidity, so pool balances don't accurately represent price
@@ -1620,11 +1609,6 @@ export default function Dashboard() {
         // rawPrice = WETH_wei per USDC_micro
         // To get ETH price: 10^12 / rawPrice
         ethPriceUsd = decimalAdjustment / rawPrice
-      }
-      
-      // Capture sqrt-only ETH price for chart use (only if in sane range)
-      if (ethPriceUsd >= 100 && ethPriceUsd <= 10000) {
-        ethPriceUsdFromSqrt = ethPriceUsd
       }
     }
 
@@ -1651,7 +1635,7 @@ export default function Dashboard() {
     // GGX price in USD
     const ggxPriceUsd = ggxPrice * ethPriceUsd
     
-    return { ragePrice, ragePriceFromSqrt, ragePair, ragePriceInUsdc, esharePrice, esharePriceFromSqrt, esharePair, ggxPrice, ggxPriceFromSqrt, ggxPair, ggxPriceUsd, ethPriceUsd, ethPriceUsdFromSqrt, rageLpExists, eshareLpExists, ggxLpExists }
+    return { ragePrice, ragePair, ragePriceInUsdc, esharePrice, esharePair, ggxPrice, ggxPair, ggxPriceUsd, ethPriceUsd, rageLpExists, eshareLpExists, ggxLpExists }
   }, [rageSlot0, rageLiquidity, rageT0, rageT1, eshareSlot0, eshareLiquidity, eshareT0, eshareT1, ggxSlot0, ggxLiquidity, ggxT0, ggxT1, ggxPoolWethBal, ggxPoolGgxBal, wethUsdcSlot0, wethUsdcT0, wethUsdcPoolWethBal, wethUsdcPoolUsdcBal])
   
   // Calculate GGX theoretical backing value in USD directly
@@ -1681,155 +1665,29 @@ export default function Dashboard() {
     if (ggxBackingValueUsd === 0 || prices.ethPriceUsd === 0) return 0
     return ggxBackingValueUsd / prices.ethPriceUsd
   }, [ggxBackingValueUsd, prices.ethPriceUsd])
-  
-  // Sqrt-only backing value — for the price efficiency chart ONLY.
-  // Returns null if ANY price input is unavailable from sqrt sources, so the
-  // chart skips ticks where the denominator can't be trusted. Mirrors
-  // ggxBackingValueUsd structure but with strict null propagation.
-  const ggxBackingValueUsdFromSqrt = useMemo<number | null>(() => {
-    if (!backingRatio) return null
-    if (prices.esharePriceFromSqrt === null || prices.esharePriceFromSqrt <= 0) return null
-    if (prices.ragePriceFromSqrt === null || prices.ragePriceFromSqrt <= 0) return null
-    if (prices.ethPriceUsdFromSqrt === null || prices.ethPriceUsdFromSqrt <= 0) return null
-    
-    const [esharePer, ragePer] = backingRatio
-    
-    // ESHARE is paired with ETH, so convert to USD via sqrt-only ETH price
-    const eshareValueUsd =
-      parseFloat(formatUnits(esharePer, 18)) *
-      prices.esharePriceFromSqrt *
-      prices.ethPriceUsdFromSqrt
-    
-    // RAGE: if paired with USDC, price is already in USD; else convert via ETH
-    let rageValueUsd: number
-    if (prices.ragePriceInUsdc) {
-      rageValueUsd = parseFloat(formatUnits(ragePer, 18)) * prices.ragePriceFromSqrt
-    } else {
-      rageValueUsd =
-        parseFloat(formatUnits(ragePer, 18)) *
-        prices.ragePriceFromSqrt *
-        prices.ethPriceUsdFromSqrt
-    }
-    
-    const total = eshareValueUsd + rageValueUsd
-    return total > 0 ? total : null
-  }, [backingRatio, prices.esharePriceFromSqrt, prices.ragePriceFromSqrt, prices.ragePriceInUsdc, prices.ethPriceUsdFromSqrt])
-  
+
   // Calculate price efficiency ratio (Uniswap vs Mint)
   // When < 1: Buy on Uniswap (cheaper than mint)
   // When > 1: Mint is better (Uniswap has premium)
   //
-  // CRITICAL: BOTH numerator AND denominator must use sqrt-only prices.
-  // The earlier fix sanitized only the numerator (ggxPriceFromSqrt), but the
-  // denominator (ggxBackingValueUsd) still used prices.ethPriceUsd which can
-  // fall back to 2400, AND used regular esharePrice/ragePrice which silently
-  // become 0 during refetch gaps. This created mismatched ETH price scaling
-  // between the two halves of the ratio, producing 0.288-style spike artifacts
-  // during high-trading-activity periods (which trigger more refetches).
-  // 
-  // Now both halves use sqrt-only sources; if any are unavailable, return null
-  // and the chart skips the tick entirely.
+  // Price feed comes from the 1% fee tier ERAGE-ETH pool (GGX_LP). Arbitrage
+  // bots keep it aligned with the 0.3% pool, and its wider/deeper liquidity
+  // gives a smoother price signal — no more spike-down artifacts that the
+  // 0.3% pool's concentrated liquidity caused. Filters reverted accordingly.
   const priceEfficiencyRatio = useMemo(() => {
-    if (prices.ggxPriceFromSqrt === null || prices.ggxPriceFromSqrt <= 0) return null
-    if (prices.ethPriceUsdFromSqrt === null || prices.ethPriceUsdFromSqrt <= 0) return null
-    if (ggxBackingValueUsdFromSqrt === null || ggxBackingValueUsdFromSqrt <= 0) return null
-    
-    // Calculate GGX price in USD using sqrt-only sources
-    const ggxPriceUsd = prices.ggxPriceFromSqrt * prices.ethPriceUsdFromSqrt
-    
-    // Ratio = Uniswap price / backing value (both in USD, both sqrt-only)
-    return ggxPriceUsd / ggxBackingValueUsdFromSqrt
-  }, [prices.ggxPriceFromSqrt, prices.ethPriceUsdFromSqrt, ggxBackingValueUsdFromSqrt])
-  
+    if (prices.ggxPrice <= 0) return null
+    if (prices.ethPriceUsd <= 0) return null
+    if (ggxBackingValueUsd <= 0) return null
+
+    const ggxPriceUsd = prices.ggxPrice * prices.ethPriceUsd
+    return ggxPriceUsd / ggxBackingValueUsd
+  }, [prices.ggxPrice, prices.ethPriceUsd, ggxBackingValueUsd])
+
   // Track price efficiency history for the chart
-  // Data persisted via useChartHistory hook — survives page.tsx updates
-  //
-  // FILTER STRATEGY (hard bounds + median):
-  //
-  // Previous filters tried to be clever about distinguishing "real moves" from
-  // "artifacts" by waiting for confirmation. That failed because the bug we
-  // were chasing produces a DETERMINISTIC bad value (~0.287, repeated to 4
-  // decimal places). Multiple consecutive reads of the same bad value passed
-  // the "agreement" check and got recorded.
-  //
-  // New approach is dumb but bulletproof:
-  //   1. Hard bounds: reject anything outside [0.5, 2.0]. Real GGX backing-vs-
-  //      Uniswap ratios live near 1.0 in practice — even during severe market
-  //      dislocations they won't reach 0.5 or 2.0. Anything outside is, by
-  //      definition, a computation bug.
-  //   2. Median deviation: reject anything more than 15% from the median of
-  //      the last 5 recorded readings. This catches the residual edge cases
-  //      where a real-looking value (in [0.5, 2.0]) is still anomalous given
-  //      the recent trajectory.
-  //   3. Always log rejected readings to the console as REJECTED_RATIO with
-  //      the inputs, so we can diagnose the root cause from real captured
-  //      data instead of guessing.
-  const recentReadingsRef = useRef<number[]>([])
   useEffect(() => {
     if (!historyLoaded || priceEfficiencyRatio === null || priceEfficiencyRatio <= 0) return
-
-    const HARD_MIN = 0.5
-    const HARD_MAX = 2.0
-    const MEDIAN_DEVIATION_LIMIT = 0.15
-    const RECENT_WINDOW = 5
-
-    // ----- Hard bounds check -----
-    if (priceEfficiencyRatio < HARD_MIN || priceEfficiencyRatio > HARD_MAX) {
-      // Always log rejections so we can diagnose the bug source from real data.
-      const backingRatioRaw = backingRatio
-        ? [backingRatio[0]?.toString(), backingRatio[1]?.toString()]
-        : null
-      // eslint-disable-next-line no-console
-      console.warn('REJECTED_RATIO (hard bounds)', {
-        timestamp: new Date().toISOString(),
-        ratio: priceEfficiencyRatio,
-        ggxPriceFromSqrt: prices.ggxPriceFromSqrt,
-        ethPriceUsdFromSqrt: prices.ethPriceUsdFromSqrt,
-        esharePriceFromSqrt: prices.esharePriceFromSqrt,
-        ragePriceFromSqrt: prices.ragePriceFromSqrt,
-        ragePriceInUsdc: prices.ragePriceInUsdc,
-        backingValueUsd: ggxBackingValueUsdFromSqrt,
-        backingRatioOnChain: backingRatioRaw,
-      })
-      return
-    }
-
-    // ----- Median deviation check -----
-    const recent = recentReadingsRef.current
-    if (recent.length >= 3) {
-      const sorted = [...recent].sort((a, b) => a - b)
-      const median = sorted[Math.floor(sorted.length / 2)]
-      const deviationFromMedian = Math.abs(priceEfficiencyRatio - median) / median
-      if (deviationFromMedian > MEDIAN_DEVIATION_LIMIT) {
-        // eslint-disable-next-line no-console
-        console.warn('REJECTED_RATIO (median deviation)', {
-          timestamp: new Date().toISOString(),
-          ratio: priceEfficiencyRatio,
-          recentMedian: median,
-          deviationPct: (deviationFromMedian * 100).toFixed(2) + '%',
-          recentReadings: [...recent],
-        })
-        return
-      }
-    }
-
-    // ----- Accept the reading -----
-    recent.push(priceEfficiencyRatio)
-    if (recent.length > RECENT_WINDOW) recent.shift()
     addPriceEfficiencyPoint(priceEfficiencyRatio)
-  }, [
-    priceEfficiencyRatio,
-    historyLoaded,
-    addPriceEfficiencyPoint,
-    // For diagnostic logging only — read inside effect when a rejection fires:
-    prices.ggxPriceFromSqrt,
-    prices.ethPriceUsdFromSqrt,
-    prices.esharePriceFromSqrt,
-    prices.ragePriceFromSqrt,
-    prices.ragePriceInUsdc,
-    ggxBackingValueUsdFromSqrt,
-    backingRatio,
-  ])
+  }, [priceEfficiencyRatio, historyLoaded, addPriceEfficiencyPoint])
   
   // Estimated GGX output for ETH zap
   // Computed from the actual backing value (cost to mint 1 GGX in ETH terms)
@@ -2312,6 +2170,7 @@ export default function Dashboard() {
                                 parseFloat(formatUnits(backingBalances[0], 18)) * prices.esharePrice * prices.ethPriceUsd +
                                 parseFloat(formatUnits(backingBalances[1], 18)) * prices.ragePrice +
                                 (ggxPoolWethBal ? parseFloat(formatUnits(ggxPoolWethBal, 18)) : 0) * prices.ethPriceUsd +
+                                (ggxPool03WethBal ? parseFloat(formatUnits(ggxPool03WethBal, 18)) : 0) * prices.ethPriceUsd +
                                 (ggxRagePoolRageBal ? parseFloat(formatUnits(ggxRagePoolRageBal, 18)) : 0) * prices.ragePrice +
                                 (ggxEsharePoolEshareBal ? parseFloat(formatUnits(ggxEsharePoolEshareBal, 18)) : 0) * prices.esharePrice * prices.ethPriceUsd +
                                 (erageRagePoolRageBal ? parseFloat(formatUnits(erageRagePoolRageBal, 18)) : 0) * prices.ragePrice +
@@ -2887,9 +2746,14 @@ export default function Dashboard() {
                           <p className="text-gray-400">{backingBalances && prices.ragePrice > 0 ? `$${formatPrice(parseFloat(formatUnits(backingBalances[1], 18)) * prices.ragePrice)}` : '—'}</p>
                         </div>
                         <div className="bg-[#3B82F6]/10 rounded p-1.5">
-                          <p className="text-[#3B82F6] font-semibold">ERAGE-ETH Pool</p>
+                          <p className="text-[#3B82F6] font-semibold">ERAGE-ETH Pool (V3 1%)</p>
                           <p className="text-white">{ggxPoolWethBal ? formatNum(ggxPoolWethBal, 18) : '—'} ETH</p>
                           <p className="text-gray-400">{ggxPoolWethBal && prices.ethPriceUsd > 0 ? `$${formatPrice(parseFloat(formatUnits(ggxPoolWethBal, 18)) * prices.ethPriceUsd)}` : '—'}</p>
+                        </div>
+                        <div className="bg-[#3B82F6]/10 rounded p-1.5">
+                          <p className="text-[#3B82F6] font-semibold">ERAGE-ETH Pool (V3 0.3%)</p>
+                          <p className="text-white">{ggxPool03WethBal ? formatNum(ggxPool03WethBal, 18) : '—'} ETH</p>
+                          <p className="text-gray-400">{ggxPool03WethBal && prices.ethPriceUsd > 0 ? `$${formatPrice(parseFloat(formatUnits(ggxPool03WethBal, 18)) * prices.ethPriceUsd)}` : '—'}</p>
                         </div>
                         <div className="bg-[#EF4444]/10 rounded p-1.5">
                           <p className="text-[#EF4444] font-semibold">ERAGE-RAGE Pool</p>
@@ -3034,9 +2898,14 @@ export default function Dashboard() {
                               <p className="text-gray-400">{backingBalances && prices.ragePrice > 0 ? `$${formatPrice(parseFloat(formatUnits(backingBalances[1], 18)) * prices.ragePrice)}` : '—'}</p>
                             </div>
                             <div className="bg-[#3B82F6]/10 rounded p-1.5">
-                              <p className="text-[#3B82F6] font-semibold">ERAGE-ETH Pool</p>
+                              <p className="text-[#3B82F6] font-semibold">ERAGE-ETH Pool (V3 1%)</p>
                               <p className="text-white">{ggxPoolWethBal ? formatNum(ggxPoolWethBal, 18) : '—'} ETH</p>
                               <p className="text-gray-400">{ggxPoolWethBal && prices.ethPriceUsd > 0 ? `$${formatPrice(parseFloat(formatUnits(ggxPoolWethBal, 18)) * prices.ethPriceUsd)}` : '—'}</p>
+                            </div>
+                            <div className="bg-[#3B82F6]/10 rounded p-1.5">
+                              <p className="text-[#3B82F6] font-semibold">ERAGE-ETH Pool (V3 0.3%)</p>
+                              <p className="text-white">{ggxPool03WethBal ? formatNum(ggxPool03WethBal, 18) : '—'} ETH</p>
+                              <p className="text-gray-400">{ggxPool03WethBal && prices.ethPriceUsd > 0 ? `$${formatPrice(parseFloat(formatUnits(ggxPool03WethBal, 18)) * prices.ethPriceUsd)}` : '—'}</p>
                             </div>
                             <div className="bg-[#EF4444]/10 rounded p-1.5">
                               <p className="text-[#EF4444] font-semibold">ERAGE-RAGE Pool</p>
@@ -3067,6 +2936,7 @@ export default function Dashboard() {
                                     parseFloat(formatUnits(backingBalances[0], 18)) * prices.esharePrice * prices.ethPriceUsd +
                                     parseFloat(formatUnits(backingBalances[1], 18)) * prices.ragePrice +
                                     (ggxPoolWethBal ? parseFloat(formatUnits(ggxPoolWethBal, 18)) : 0) * prices.ethPriceUsd +
+                                    (ggxPool03WethBal ? parseFloat(formatUnits(ggxPool03WethBal, 18)) : 0) * prices.ethPriceUsd +
                                     (ggxRagePoolRageBal ? parseFloat(formatUnits(ggxRagePoolRageBal, 18)) : 0) * prices.ragePrice +
                                     (ggxEsharePoolEshareBal ? parseFloat(formatUnits(ggxEsharePoolEshareBal, 18)) : 0) * prices.esharePrice * prices.ethPriceUsd +
                                     (erageRagePoolRageBal ? parseFloat(formatUnits(erageRagePoolRageBal, 18)) : 0) * prices.ragePrice +

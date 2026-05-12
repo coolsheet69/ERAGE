@@ -7,48 +7,24 @@ const MAX_POINTS = 20000
 const RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 
 // ===== SERVER-SIDE VALIDATION =====
-// Two-layer validation that protects against bug-corrupted writes WITHOUT
-// hiding real market events:
-//
-// LAYER 1 (absolute sanity bounds): catches values that are mathematically
-//   impossible or computational nonsense. Set wide enough that any real
-//   economic event — flash crash, viral pump, oracle failure with partial
-//   liquidity — passes through. Only catches things like NaN-ish numbers,
-//   zero, negatives, and astronomical values.
-//
-// LAYER 2 (rate-of-change limit): catches single-tick "teleportation"
-//   between two stable but distant levels (e.g. 0.99 → 0.29 → 0.99 in
-//   consecutive 30s ticks). REAL price moves, even crashes, take multiple
-//   ticks to develop because they're driven by sequential trades. A single
-//   reading that jumps >40% from the last accepted reading is a computation
-//   bug, not a market event. A genuine flash crash from 1.0 to 0.3 will
-//   register over ~3 ticks (1.0 → 0.6 → 0.36 → 0.30) instead of one tick;
-//   the chart lags a real crash by ~30-60 seconds, which is acceptable.
-//
-// This design lets through anything a real market can produce (extreme
-// dislocations included) while still blocking the deterministic 0.287 bug
-// which manifests as instant teleportation between 0.99 and 0.287.
+// The chart's price feed is now sourced from the 1% fee tier ERAGE-ETH pool.
+// That pool's deeper, less-concentrated liquidity has eliminated the spike-
+// down artifacts that the 0.3% pool produced, so the elaborate rate-of-change
+// filter that was previously here is no longer needed. The only validation
+// retained is absolute sanity bounds — values that are mathematically
+// impossible or computational nonsense (NaN, Infinity, zero, negatives,
+// astronomical values). Everything a real market can produce passes through.
 
 const PRICE_HARD_MIN = 0.01  // mathematical sanity floor
 const PRICE_HARD_MAX = 100   // mathematical sanity ceiling
 const BACKING_HARD_MIN = 1.0 // backing ratio cannot logically be below initial
 const BACKING_HARD_MAX = 10000
 
-// Max permitted change between consecutive accepted points, as a fraction.
-// 0.4 = 40% — large enough to let any plausible single-block trade through;
-// small enough to block 1.0 → 0.287 (which is a 71% drop).
-const MAX_RELATIVE_CHANGE = 0.4
-
 function isAbsolutelyInsane(type: string, ratio: number): boolean {
   if (!Number.isFinite(ratio)) return true
   if (type === 'price') return ratio < PRICE_HARD_MIN || ratio > PRICE_HARD_MAX
   if (type === 'backing') return ratio < BACKING_HARD_MIN || ratio > BACKING_HARD_MAX
   return true
-}
-
-function isRateOfChangeViolation(prev: number, next: number): boolean {
-  if (prev <= 0) return false  // can't compute a relative change
-  return Math.abs(next - prev) / prev > MAX_RELATIVE_CHANGE
 }
 
 let client: ReturnType<typeof createClient> | null = null
@@ -73,15 +49,8 @@ export async function GET() {
     ])
 
     // Scrub on read: drop pre-existing bad points so the chart renders clean
-    // without requiring a manual wipe.
-    //
-    // For PRICE history: two-pass — drop absolutely insane values, then walk
-    // forward sequentially and drop anything that violates rate-of-change vs.
-    // last kept point.
-    //
-    // For BACKING history: only drop absolutely insane values. Backing ratio is
-    // monotonic and grows slowly; rate-of-change checks are inappropriate and
-    // can wipe legitimate history during deploys or data migrations.
+    // without requiring a manual wipe. Only absolute-sanity rejections —
+    // anything a real market can produce is kept.
     const scrub = (
       raw: string | null,
       type: 'price' | 'backing'
@@ -92,10 +61,6 @@ export async function GET() {
       for (const p of parsed) {
         if (p.time <= cutoff) continue
         if (isAbsolutelyInsane(type, p.ratio)) continue
-        if (type === 'price') {
-          const last = cleaned[cleaned.length - 1]
-          if (last && isRateOfChangeViolation(last.ratio, p.ratio)) continue
-        }
         cleaned.push(p)
       }
       return cleaned
@@ -121,7 +86,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: 'invalid_type' }, { status: 400 })
     }
 
-    // Layer 1: absolute sanity bounds
+    // Absolute sanity bounds — only catches NaN/Infinity/zero/negatives/astronomical
     if (isAbsolutelyInsane(type, point.ratio)) {
       console.warn(`[chart-history] Rejected absolutely-insane ${type} point:`, point.ratio)
       return NextResponse.json({ ok: false, rejected: 'absolutely_insane' })
@@ -139,15 +104,6 @@ export async function POST(req: Request) {
 
     const last = history[history.length - 1]
 
-    // Layer 2: rate-of-change limit (only for price ratios; backing ratio is
-    // monotonic by protocol design and shouldn't see large jumps).
-    if (type === 'price' && last && isRateOfChangeViolation(last.ratio, point.ratio)) {
-      console.warn(
-        `[chart-history] Rejected price point violating rate-of-change: ${last.ratio.toFixed(4)} → ${point.ratio.toFixed(4)}`
-      )
-      return NextResponse.json({ ok: false, rejected: 'rate_of_change' })
-    }
-
     // Throttle: don't add if last point was < 10s ago
     if (!last || point.time - last.time >= 10000) {
       history.push(point)
@@ -163,9 +119,9 @@ export async function POST(req: Request) {
 }
 
 // DELETE endpoint to clear history. Supports clearing one type or both.
-//   DELETE /api/chart-history          → clears both
-//   DELETE /api/chart-history?type=price    → clears only price history
-//   DELETE /api/chart-history?type=backing  → clears only backing history
+//   DELETE /api/chart-history                → clears both
+//   DELETE /api/chart-history?type=price     → clears only price history
+//   DELETE /api/chart-history?type=backing   → clears only backing history
 //
 // Also supports scrubbing only out-of-bounds points (preserves valid history):
 //   DELETE /api/chart-history?mode=scrub
@@ -184,15 +140,13 @@ export async function DELETE(req: Request) {
 
     for (const { key, type: t } of keysToProcess) {
       if (mode === 'scrub') {
-        // Scrub mode: keep only valid points (same two-layer logic as GET)
+        // Scrub mode: keep only valid points (absolute sanity bounds only)
         const raw = await redis.get(key)
         const history: { time: number; ratio: number }[] = raw ? JSON.parse(raw) : []
         const before = history.length
         const cleaned: { time: number; ratio: number }[] = []
         for (const p of history) {
           if (isAbsolutelyInsane(t, p.ratio)) continue
-          const last = cleaned[cleaned.length - 1]
-          if (last && t === 'price' && isRateOfChangeViolation(last.ratio, p.ratio)) continue
           cleaned.push(p)
         }
         await redis.set(key, JSON.stringify(cleaned))
