@@ -381,7 +381,7 @@ function RatioChart({
 
       // ── Zone thresholds ──
       const GREEN_ZONE = 1.035
-      const RED_ZONE = 0.975
+      const RED_ZONE = 0.965
 
       // ── Green Zone (top): above 1.035 — "Greenzone Efficiency Strategy" ──
       if (filteredPriceEfficiency.length > 0 && maxRatio > GREEN_ZONE) {
@@ -402,7 +402,7 @@ function RatioChart({
         }
       }
 
-      // ── Blue Neutral Zone: between 0.975 and 1.035 ──
+      // ── Blue Neutral Zone: between 0.965 and 1.035 ──
       if (filteredPriceEfficiency.length > 0) {
         const upperY = padding.top + chartHeight - ((GREEN_ZONE - minRatio) / ratioRange) * chartHeight
         const lowerY = padding.top + chartHeight - ((RED_ZONE - minRatio) / ratioRange) * chartHeight
@@ -418,7 +418,7 @@ function RatioChart({
         }
       }
 
-      // ── Red Zone (bottom): below 0.975 — "Redzone Efficiency Strategy" ──
+      // ── Red Zone (bottom): below 0.965 — "Redzone Efficiency Strategy" ──
       if (filteredPriceEfficiency.length > 0 && minRatio < RED_ZONE) {
         const redY = padding.top + chartHeight - ((RED_ZONE - minRatio) / ratioRange) * chartHeight
         const bottomY = padding.top + chartHeight
@@ -454,7 +454,7 @@ function RatioChart({
         ctx.stroke()
         
         // Skip auto grid labels between 0.95 and 1.05 — we have static labels
-        // for 0.975, 1.000, and 1.035 already, so no need for numbers in that range
+        // for 0.965, 1.000, and 1.035 already, so no need for numbers in that range
         if (ratioVal >= 0.95 && ratioVal <= 1.05) continue
         ctx.fillText(ratioVal.toFixed(3), padding.left - 4, y + 3)
       }
@@ -498,9 +498,9 @@ function RatioChart({
         ctx.fillText('1.035', padding.left - 4, threshY + 3)
       }
 
-      // ── 0.975 threshold line (orange dashed) ──
-      if (filteredPriceEfficiency.length > 0 && minRatio < 0.975 && maxRatio > 0.975) {
-        const threshY = padding.top + chartHeight - ((0.975 - minRatio) / ratioRange) * chartHeight
+      // ── 0.965 threshold line (orange dashed) ──
+      if (filteredPriceEfficiency.length > 0 && minRatio < 0.965 && maxRatio > 0.965) {
+        const threshY = padding.top + chartHeight - ((0.965 - minRatio) / ratioRange) * chartHeight
         ctx.strokeStyle = 'rgba(249, 115, 22, 0.4)'
         ctx.setLineDash([8, 4])
         ctx.lineWidth = 1
@@ -515,7 +515,7 @@ function RatioChart({
         ctx.fillStyle = '#F97316'
         ctx.textAlign = 'right'
         ctx.font = '9px sans-serif'
-        ctx.fillText('0.975', padding.left - 4, threshY + 3)
+        ctx.fillText('0.965', padding.left - 4, threshY + 3)
       }
 
       // Draw X-axis time labels
