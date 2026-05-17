@@ -15,7 +15,7 @@
 
 import { useAccount, useConnect, useDisconnect, useReadContract, useWriteContract, useWaitForTransactionReceipt, useSwitchChain, useBalance, useWatchContractEvent } from 'wagmi'
 import { useQueryClient } from '@tanstack/react-query'
-import { parseUnits, formatUnits, parseAbiItem, createPublicClient, http } from 'viem'
+import { parseUnits, formatUnits, parseAbiItem } from 'viem'
 import { base } from 'wagmi/chains'
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useChartHistory } from './useChartHistory'
@@ -816,18 +816,7 @@ export default function Dashboard() {
   
   // Burnt amounts - v4 tracks burns directly on-chain + includes legacy burns
   const [burntAmounts, setBurntAmounts] = useState<{ eshare: bigint; rage: bigint }>({ eshare: 0n, rage: 0n })
-  
-  // ERAGE burn tracking — watch Transfer events to address(0) on the ERAGE contract
-  // The contract's burn() function doesn't track totalErageBurned, so we monitor on-chain events.
-  // We initialize from localStorage cache instantly, then fetch full history from chain.
-  const [erageBurnt, setErageBurnt] = useState<bigint>(() => {
-    if (typeof window === 'undefined') return 0n
-    try {
-      const cached = localStorage.getItem('erageBurnt')
-      return cached ? BigInt(cached) : 0n
-    } catch { return 0n }
-  })
-  
+
   // ============ CONTRACT READS ============
   const { data: ggxBal } = useReadContract({ address: CONTRACTS.GGX, abi: ERC20_ABI, functionName: 'balanceOf', args: address ? [address] : undefined, query: { enabled: !!address } })
   const { data: eshareBal } = useReadContract({ address: CONTRACTS.ESHARE, abi: ERC20_ABI, functionName: 'balanceOf', args: address ? [address] : undefined, query: { enabled: !!address } })
@@ -991,163 +980,7 @@ export default function Dashboard() {
       rage: (totalRageBurned || 0n) + LEGACY_BURNT.rage
     })
   }, [totalEshareBurned, totalRageBurned])
-  
-  // ── ERAGE Burn Tracking ──
-  // The contract's burn() function doesn't increment a totalErageBurned counter,
-  // so we watch for ERC20 Transfer events to address(0) on the ERAGE contract.
-  // This captures voluntary burns via burn() AND ERAGE destroyed during redeem().
-  //
-  // Bug history: the previous version intermittently spiked the burnt total because
-  //   (a) useWatchContractEvent can re-emit the same log during Base reorgs, and
-  //   (b) when publicClient changed reference, the historical fetch re-ran and
-  //       overwrote totals that the watcher had already incremented.
-  // Fix: dedupe every counted log by txHash:logIndex via a ref-held Set, run the
-  // historical fetch exactly once, and use a dedicated reliable RPC for getLogs
-  // so its result isn't subject to wagmi transport rotation.
-  const ZERO_ADDR = '0x0000000000000000000000000000000000000000' as `0x${string}`
 
-  // ERAGE first burn block on Base — narrows the query range for speed & reliability
-  const ERAGE_DEPLOY_BLOCK = 45386361n
-
-  // Dedicated client for the one-shot historical scan. publicnode has been
-  // reliable for getLogs but caps single requests at 50k blocks and times out
-  // around 10s; we use 49k chunks fired in parallel batches with per-chunk retry.
-  const burnLogsClient = useMemo(() => createPublicClient({
-    chain: base,
-    transport: http('https://base-rpc.publicnode.com', { timeout: 15_000 }),
-  }), [])
-
-  // Fingerprints of logs we've already counted ("txHash-logIndex"). Survives
-  // re-renders, never resets. Both the historical fetch and the live watcher
-  // consult this set before adding to the running total — eliminates double counts
-  // from reorg re-emissions and any overlap between getLogs and the watcher.
-  const countedBurnLogs = useRef<Set<string>>(new Set())
-  const historicalFetchStarted = useRef(false)
-  const historicalFetchDone = useRef(false)
-  // Burns added by the live watcher BEFORE the historical fetch finishes.
-  // After history loads we set erageBurnt = historicalTotal + pendingWatcherDelta,
-  // so the authoritative replacement doesn't drop a watcher-observed burn.
-  const pendingWatcherDelta = useRef<bigint>(0n)
-
-  // Fetch historical burn events ONCE on mount — never overwrite later.
-  // Strategy: split the full range into ~49k-block chunks (publicnode caps at 50k),
-  // fetch in parallel batches with per-chunk retry, so one slow chunk can't
-  // nuke the whole scan the way a single serial timeout does.
-  useEffect(() => {
-    if (historicalFetchStarted.current) return
-    historicalFetchStarted.current = true
-
-    const CHUNK = 49000n
-    const PARALLEL = 8        // concurrent requests per batch
-    const MAX_RETRIES = 3
-
-    const fetchChunk = async (from: bigint, to: bigint, attempt = 0): Promise<any[]> => {
-      try {
-        return await burnLogsClient.getLogs({
-          address: CONTRACTS.GGX,
-          event: {
-            type: 'event',
-            name: 'Transfer',
-            inputs: [
-              { name: 'from', type: 'address', indexed: true },
-              { name: 'to', type: 'address', indexed: true },
-              { name: 'value', type: 'uint256', indexed: false },
-            ],
-          },
-          args: { to: ZERO_ADDR },
-          fromBlock: from,
-          toBlock: to,
-        })
-      } catch (err) {
-        if (attempt < MAX_RETRIES) {
-          // Exponential backoff: 500ms, 1s, 2s
-          await new Promise(r => setTimeout(r, 500 * 2 ** attempt))
-          return fetchChunk(from, to, attempt + 1)
-        }
-        throw err
-      }
-    }
-
-    const fetchHistoricalBurns = async () => {
-      try {
-        const latestBlock = await burnLogsClient.getBlockNumber()
-
-        // Build the full list of (from, to) ranges upfront
-        const ranges: Array<[bigint, bigint]> = []
-        for (let from = ERAGE_DEPLOY_BLOCK; from <= latestBlock; from += CHUNK) {
-          const to = from + CHUNK - 1n > latestBlock ? latestBlock : from + CHUNK - 1n
-          ranges.push([from, to])
-        }
-
-        // Process ranges in parallel batches of PARALLEL
-        let total = 0n
-        for (let i = 0; i < ranges.length; i += PARALLEL) {
-          const batch = ranges.slice(i, i + PARALLEL)
-          const results = await Promise.all(batch.map(([f, t]) => fetchChunk(f, t)))
-          for (const logs of results) {
-            for (const log of logs) {
-              const value = log.args.value ?? 0n
-              if (value === 0n) continue
-              const key = `${log.transactionHash}-${log.logIndex}`
-              if (countedBurnLogs.current.has(key)) continue
-              countedBurnLogs.current.add(key)
-              total += value
-            }
-          }
-        }
-
-        // Authoritative replacement: history + anything the watcher caught
-        // during the scan that wasn't in our historical range yet.
-        const finalTotal = total + pendingWatcherDelta.current
-        pendingWatcherDelta.current = 0n
-        setErageBurnt(finalTotal)
-        historicalFetchDone.current = true
-        try { localStorage.setItem('erageBurnt', finalTotal.toString()) } catch {}
-      } catch (err) {
-        console.warn('Failed to fetch historical ERAGE burn logs:', err)
-        // Allow a retry on next mount/reload — don't lock out forever
-        historicalFetchStarted.current = false
-      }
-    }
-    fetchHistoricalBurns()
-  }, [burnLogsClient])
-
-  // Persist to localStorage only after the historical fetch completes,
-  // so we don't poison the cache with an in-flight partial total.
-  useEffect(() => {
-    if (!historicalFetchDone.current) return
-    try { localStorage.setItem('erageBurnt', erageBurnt.toString()) } catch {}
-  }, [erageBurnt])
-
-  useWatchContractEvent({
-    address: CONTRACTS.GGX,
-    abi: ERC20_ABI,
-    eventName: 'Transfer',
-    onLogs(logs) {
-      let delta = 0n
-      for (const log of logs) {
-        if (log.args.to?.toLowerCase() !== ZERO_ADDR) continue
-        const value = log.args.value ?? 0n
-        if (value === 0n) continue
-        const key = `${log.transactionHash}-${log.logIndex}`
-        // Reorg re-emissions arrive with the same txHash+logIndex — skip.
-        if (countedBurnLogs.current.has(key)) continue
-        countedBurnLogs.current.add(key)
-        delta += value
-      }
-      if (delta === 0n) return
-      if (historicalFetchDone.current) {
-        // Normal path: history is loaded, just append.
-        setErageBurnt(prev => prev + delta)
-      } else {
-        // History still loading: stash the delta so the final replacement
-        // can include it instead of clobbering it.
-        pendingWatcherDelta.current += delta
-        setErageBurnt(prev => prev + delta)
-      }
-    },
-  })
-  
   const { data: zapRouter } = useReadContract({ address: CONTRACTS.GGXZap, abi: ZAP_ABI, functionName: 'uniswapV3Router' })
   const { data: zapWeth } = useReadContract({ address: CONTRACTS.GGXZap, abi: ZAP_ABI, functionName: 'weth' })
   const { data: zapErage } = useReadContract({ address: CONTRACTS.GGXZap, abi: ZAP_ABI, functionName: 'erage' })
@@ -2115,17 +1948,8 @@ export default function Dashboard() {
                             {estimatedAPR !== null && (
                               <div className="text-center">
                                 <p className="text-xs text-gray-400 font-medium">48H APR</p>
-                                <p className="text-base font-bold flex items-center justify-center gap-1.5">
+                                <p className="text-base font-bold text-center">
                                   <span className="text-[#10B981] animate-apr-glow" style={{ animationDuration: '0.6s' }}>~{Math.round(estimatedAPR.rate)}%</span>
-                                  <span className="text-[10px] text-gray-500">
-                                    {estimatedAPR.minutesElapsed === -1
-                                      ? 'on-chain est.'
-                                      : estimatedAPR.minutesElapsed >= 48 * 60
-                                        ? `48hr est.`
-                                        : estimatedAPR.minutesElapsed >= 60
-                                          ? `${Math.round(estimatedAPR.minutesElapsed / 60)}hr est.`
-                                          : `${estimatedAPR.minutesElapsed}m est.`}
-                                  </span>
                                 </p>
                               </div>
                             )}
@@ -2135,9 +1959,8 @@ export default function Dashboard() {
                             {estimated30dAPR !== null && (
                               <div className="text-center">
                                 <p className="text-xs text-gray-400 font-medium">30D APR</p>
-                                <p className="text-base font-bold flex items-center justify-center gap-1.5">
+                                <p className="text-base font-bold text-center">
                                   <span className="text-[#10B981] animate-apr-glow">~{estimated30dAPR.rate.toFixed(1)}%</span>
-                                  <span className="text-[10px] text-gray-500">30d est.</span>
                                 </p>
                               </div>
                             )}
@@ -2214,19 +2037,15 @@ export default function Dashboard() {
                         
                         {/* Burnt Section */}
                         <div className="pt-1 border-t border-white/10">
-                          <p className="text-[13px] text-gray-400 text-center mb-1 font-semibold">🔥 Burnt 🔥</p>
-                          <div className="flex flex-col gap-0.5 text-xs">
+                          <p className="text-sm text-gray-400 text-center mb-1 font-semibold">🔥 Burnt 🔥</p>
+                          <div className="flex flex-col gap-0.5 text-[13px]">
                             <div className="flex items-center gap-1">
-                              <img src="/eshare-logo.webp" className="w-3.5 h-3.5 rounded object-cover shrink-0" alt="ESHARE" />
+                              <img src="/eshare-logo.webp" className="w-4 h-4 rounded object-cover shrink-0" alt="ESHARE" />
                               <div className="flex gap-1 w-full"><span className="text-[#8B5CF6] font-semibold w-[50px]">ESHARE</span><span className="text-[#8B5CF6] font-semibold ml-auto">{burntAmounts.eshare > 0n ? formatNum(burntAmounts.eshare) : '—'}</span></div>
                             </div>
                             <div className="flex items-center gap-1">
-                              <img src="/rage-logo.webp" className="w-3.5 h-3.5 rounded object-cover shrink-0" alt="RAGE" />
+                              <img src="/rage-logo.webp" className="w-4 h-4 rounded object-cover shrink-0" alt="RAGE" />
                               <div className="flex gap-1 w-full"><span className="text-[#DC2626] font-semibold w-[50px]">RAGE</span><span className="text-[#DC2626] font-semibold ml-auto">{burntAmounts.rage > 0n ? formatNum(burntAmounts.rage) : '—'}</span></div>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <img src="/ERAGE-logo.webp" className="w-3.5 h-3.5 rounded object-cover shrink-0" alt="ERAGE" />
-                              <div className="flex gap-1 w-full"><span className="text-[#F97316] font-semibold w-[50px]">ERAGE</span><span className="text-[#F97316] font-semibold ml-auto">{erageBurnt > 0n ? formatNum(erageBurnt) : '—'}</span></div>
                             </div>
                           </div>
                         </div>
@@ -2234,8 +2053,8 @@ export default function Dashboard() {
                         {/* Protocol TVL at bottom - single line */}
                         {backingBalances && prices.ethPriceUsd > 0 && (
                           <div className="mt-auto pt-1 border-t border-white/10">
-                            <p className="text-[12px] font-semibold text-[#FFD700] text-center">
-                              Protocol TVL = ${formatPrice((
+                            <p className="text-sm font-semibold text-[#FFD700] text-center">
+                              Protocol TVL = ${Math.ceil(
                                 parseFloat(formatUnits(backingBalances[0], 18)) * prices.esharePrice * prices.ethPriceUsd +
                                 parseFloat(formatUnits(backingBalances[1], 18)) * prices.ragePrice +
                                 (ggxPoolWethBal ? parseFloat(formatUnits(ggxPoolWethBal, 18)) : 0) * prices.ethPriceUsd +
@@ -2244,7 +2063,7 @@ export default function Dashboard() {
                                 (ggxEsharePoolEshareBal ? parseFloat(formatUnits(ggxEsharePoolEshareBal, 18)) : 0) * prices.esharePrice * prices.ethPriceUsd +
                                 (erageRagePoolRageBal ? parseFloat(formatUnits(erageRagePoolRageBal, 18)) : 0) * prices.ragePrice +
                                 (erageEsharePoolEshareBal ? parseFloat(formatUnits(erageEsharePoolEshareBal, 18)) : 0) * prices.esharePrice * prices.ethPriceUsd
-                              ))}
+                              ).toLocaleString()}
                             </p>
                           </div>
                         )}
