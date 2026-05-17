@@ -2104,12 +2104,12 @@ export default function Dashboard() {
                       <RatioChart history={backingRatioHistory} priceEfficiencyHistory={priceEfficiencyHistory} timeRange={timeRange} currentRatio={priceEfficiencyRatio} />
                     </div>
                     {/* Strategy Guide */}
-                    <div className="mt-1 pt-1 border-t border-white/5 text-[10px] text-gray-400">
-                      <p className="text-[11px] text-gray-300 font-semibold mb-0.5 text-center">Arbitrage Strategies</p>
+                    <div className="mt-1 pt-1 border-t border-white/5 text-xs text-gray-400">
+                      <p className="text-sm text-[#FFD700] font-bold mb-0.5 text-center">Arbitrage Strategies</p>
                       <div className="flex flex-col gap-0.5">
-                        <div className="flex items-start gap-1.5"><span className="inline-block w-2 h-2 rounded-full bg-[#10B981] mt-0.5 shrink-0"></span><span className="text-[#10B981]">Green Zone Efficiency</span><span className="text-gray-400">: MINT ERAGE (cheaper) → Sell on UniSwap (capture premium)</span></div>
+                        <div className="flex items-start gap-1.5"><span className="inline-block w-2 h-2 rounded-full bg-[#10B981] mt-0.5 shrink-0"></span><span className="text-[#10B981]">Green Zone Efficiency</span><span className="text-gray-400">: MINT ERAGE <span className="text-[#10B981]">(cheaper)</span> → Sell on UniSwap</span></div>
                         <div className="flex items-start gap-1.5"><span className="inline-block w-2 h-2 rounded-full bg-[#3B82F6] mt-0.5 shrink-0"></span><span className="text-[#3B82F6]">Neutral Zone Efficiency</span><span className="text-gray-400">: MINT ERAGE or Hold</span></div>
-                        <div className="flex items-start gap-1.5"><span className="inline-block w-2 h-2 rounded-full bg-[#EF4444] mt-0.5 shrink-0"></span><span className="text-[#EF4444]">Red Zone Efficiency</span><span className="text-gray-400">: BUY on UniSwap (cheaper) → Redeem (full backing value)</span></div>
+                        <div className="flex items-start gap-1.5"><span className="inline-block w-2 h-2 rounded-full bg-[#EF4444] mt-0.5 shrink-0"></span><span className="text-[#EF4444]">Red Zone Efficiency</span><span className="text-gray-400">: BUY on UniSwap <span className="text-[#10B981]">(cheaper)</span> → Redeem</span></div>
                       </div>
                     </div>
                   </div>
@@ -2121,7 +2121,7 @@ export default function Dashboard() {
                     <div className="shrink-0 space-y-1">
                       <div className="flex gap-2">
                         <div className="flex-1 flex flex-col items-center gap-0.5">
-                          <p className="text-[11px] text-[#10B981] font-semibold">Mint</p>
+                          <p className="text-[13px] text-[#10B981] font-semibold">Mint</p>
                           <button 
                             onClick={() => { setInputToken('ETH'); setInputAmount(''); setEshareInput(''); setRageInput(''); }}
                             className={`w-full py-2 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1 ${
@@ -2134,7 +2134,7 @@ export default function Dashboard() {
                           </button>
                         </div>
                         <div className="flex-1 flex flex-col items-center gap-0.5">
-                          <p className="text-[11px] text-[#10B981] font-semibold">Mint</p>
+                          <p className="text-[13px] text-[#10B981] font-semibold">Mint</p>
                           <button 
                             onClick={() => { setInputToken('ESHARE_RAGE'); setInputAmount(''); setEshareInput(''); setRageInput(''); }}
                             className={`w-full py-2 rounded-lg text-xs font-medium transition-all ${
@@ -2147,7 +2147,7 @@ export default function Dashboard() {
                           </button>
                         </div>
                         <div className="flex-1 flex flex-col items-center gap-0.5">
-                          <p className="text-[11px] text-[#A855F7] font-semibold">Redeem</p>
+                          <p className="text-[13px] text-[#A855F7] font-semibold">Redeem</p>
                           <button 
                             onClick={() => { setInputToken('GGX'); setInputAmount(''); setEshareInput(''); setRageInput(''); }}
                             className={`w-full py-2 rounded-lg text-xs font-medium transition-all ${
@@ -2422,28 +2422,28 @@ export default function Dashboard() {
                           <a href={`https://app.uniswap.org/swap?inputCurrency=${CONTRACTS.USDC}&outputCurrency=${CONTRACTS.WETH}&chain=base`} target="_blank" rel="noopener noreferrer" className="absolute top-1 right-1.5 text-[9px] text-gray-400/60 hover:text-gray-300 flex items-center gap-0.5 transition-colors">Swap <ArrowUpRight size={8} /></a>
                           <p className="text-xs text-gray-400 text-center">ETH</p>
                           <p className="font-mono text-[13px] sm:text-sm text-center leading-tight">{ethBal ? parseFloat(formatUnits(ethBal.value, ethBal.decimals)).toFixed(4) : '0.0000'}</p>
-                          <p className="text-[11px] text-[#10B981] text-center leading-tight">{ethBal && prices.ethPriceUsd > 0 ? `$${formatPrice(parseFloat(formatUnits(ethBal.value, ethBal.decimals)) * prices.ethPriceUsd)}` : '—'}</p>
+                          <p className="text-[11px] text-[#10B981] text-center leading-tight">{ethBal && prices.ethPriceUsd > 0 ? `$${(parseFloat(formatUnits(ethBal.value, ethBal.decimals)) * prices.ethPriceUsd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}</p>
                         </div>
                         <div className="relative bg-[#141416]/80 rounded-lg py-1.5 px-2 border border-[#FF6B35]/15">
                           <CopyAddr address={CONTRACTS.ESHARE} color="#8B5CF6" />
                           <a href={`https://app.uniswap.org/swap?inputCurrency=ETH&outputCurrency=${CONTRACTS.ESHARE}&chain=base`} target="_blank" rel="noopener noreferrer" className="absolute top-1 right-1.5 text-[9px] text-[#8B5CF6]/60 hover:text-[#8B5CF6] flex items-center gap-0.5 transition-colors">Swap <ArrowUpRight size={8} /></a>
                           <p className="text-xs text-[#8B5CF6] text-center">ESHARE</p>
                           <p className="font-mono text-[13px] sm:text-sm text-center leading-tight">{formatNum(eshareBal)}</p>
-                          <p className="text-[11px] text-[#10B981] text-center leading-tight">{eshareBal && prices.esharePrice > 0 && prices.ethPriceUsd > 0 ? `$${formatPrice(parseFloat(formatUnits(eshareBal, 18)) * prices.esharePrice * prices.ethPriceUsd)}` : '—'}</p>
+                          <p className="text-[11px] text-[#10B981] text-center leading-tight">{eshareBal && prices.esharePrice > 0 && prices.ethPriceUsd > 0 ? `$${(parseFloat(formatUnits(eshareBal, 18)) * prices.esharePrice * prices.ethPriceUsd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}</p>
                         </div>
                         <div className="relative bg-[#141416]/80 rounded-lg py-1.5 px-2 border border-[#FF6B35]/15">
                           <CopyAddr address={CONTRACTS.RAGE} color="#EF4444" />
                           <a href={`https://app.uniswap.org/swap?inputCurrency=ETH&outputCurrency=${CONTRACTS.RAGE}&chain=base`} target="_blank" rel="noopener noreferrer" className="absolute top-1 right-1.5 text-[9px] text-[#EF4444]/60 hover:text-[#EF4444] flex items-center gap-0.5 transition-colors">Swap <ArrowUpRight size={8} /></a>
                           <p className="text-xs text-[#EF4444] text-center">RAGE</p>
                           <p className="font-mono text-[13px] sm:text-sm text-center leading-tight">{formatNum(rageBal)}</p>
-                          <p className="text-[11px] text-[#10B981] text-center leading-tight">{rageBal && prices.ragePrice > 0 ? `$${formatPrice(parseFloat(formatUnits(rageBal, 18)) * prices.ragePrice)}` : '—'}</p>
+                          <p className="text-[11px] text-[#10B981] text-center leading-tight">{rageBal && prices.ragePrice > 0 ? `$${(parseFloat(formatUnits(rageBal, 18)) * prices.ragePrice).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}</p>
                         </div>
                         <div className="relative bg-[#141416]/80 rounded-lg py-1.5 px-2 border border-[#FF6B35]/15">
                           <CopyAddr address={CONTRACTS.GGX} color="#FF6B35" />
                           <a href={`https://app.uniswap.org/swap?inputCurrency=ETH&outputCurrency=${CONTRACTS.GGX}&chain=base`} target="_blank" rel="noopener noreferrer" className="absolute top-1 right-1.5 text-[9px] text-[#FF6B35]/60 hover:text-[#FF6B35] flex items-center gap-0.5 transition-colors">Swap <ArrowUpRight size={8} /></a>
                           <p className="text-xs text-[#FF6B35] text-center">ERAGE</p>
                           <p className="font-mono text-[13px] sm:text-sm text-center leading-tight">{formatNum(ggxBal)}</p>
-                          <p className="text-[11px] text-[#10B981] text-center leading-tight">{ggxBal && prices.ggxPriceUsd > 0 ? `$${formatPrice(parseFloat(formatUnits(ggxBal, 18)) * prices.ggxPriceUsd)}` : '—'}</p>
+                          <p className="text-[11px] text-[#10B981] text-center leading-tight">{ggxBal && prices.ggxPriceUsd > 0 ? `$${(parseFloat(formatUnits(ggxBal, 18)) * prices.ggxPriceUsd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}</p>
                         </div>
                       </div>
                       ) : (
@@ -2557,10 +2557,10 @@ export default function Dashboard() {
                         </div>
                       </div>
                       {/* Links row — always visible, never clipped */}
-                      <div className="shrink-0 flex items-center justify-end text-[9px] text-gray-500 pt-1 border-t border-white/5">
+                      <div className="shrink-0 flex items-center justify-end text-[11px] text-gray-500 pt-1 border-t border-white/5">
                         <div className="flex items-center gap-2.5">
-                          <a href="https://t.me/+ZDuHXsPY1Jg3MmU5" target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 hover:text-white transition-colors"><MessageCircle size={9} /> Telegram</a>
-                          <a href="/ERAGE_Whitepaper_v2.pdf" target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 hover:text-white transition-colors"><FileText size={9} /> Docs</a>
+                          <a href="https://t.me/+ZDuHXsPY1Jg3MmU5" target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 hover:text-white transition-colors"><MessageCircle size={11} /> Telegram</a>
+                          <a href="/ERAGE_Whitepaper_v2.pdf" target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 hover:text-white transition-colors"><FileText size={11} /> Docs</a>
                           <a href="https://ultraroundmoney.com" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">UltraRound</a>
                           <a href="https://plazm.io" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Plazm</a>
                           <a href="https://fusion.emp.money" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Fusion</a>
