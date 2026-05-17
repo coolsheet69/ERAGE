@@ -2489,6 +2489,7 @@ export default function Dashboard() {
                                 </button>
                                 */}
                                 {inputToken === 'ETH' && 'Recommended: 1 ETH or less per mint.'}
+                                {inputToken === 'ESHARE_RAGE' && 'Mint ERAGE with 1:1 ESHARE+RAGE'}
                               </>
                             ) : (
                               'Redeem ERAGE for full 1:1 ESHARE+RAGE backing'
