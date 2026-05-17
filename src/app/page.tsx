@@ -13,9 +13,9 @@
 //   ])
 // =============================================
 
-import { useAccount, useConnect, useDisconnect, useReadContract, useWriteContract, useWaitForTransactionReceipt, useSwitchChain, useBalance, useWatchContractEvent, usePublicClient } from 'wagmi'
+import { useAccount, useConnect, useDisconnect, useReadContract, useWriteContract, useWaitForTransactionReceipt, useSwitchChain, useBalance, useWatchContractEvent } from 'wagmi'
 import { useQueryClient } from '@tanstack/react-query'
-import { parseUnits, formatUnits, parseAbiItem } from 'viem'
+import { parseUnits, formatUnits, parseAbiItem, createPublicClient, http } from 'viem'
 import { base } from 'wagmi/chains'
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useChartHistory } from './useChartHistory'
@@ -997,34 +997,51 @@ export default function Dashboard() {
   // so we watch for ERC20 Transfer events to address(0) on the ERAGE contract.
   // This captures voluntary burns via burn() AND ERAGE destroyed during redeem().
   //
-  // Persistence strategy:
-  // 1. Instant load from localStorage cache (survives page reuploads)
-  // 2. On mount, fetch full historical Transfer(to=0) logs from chain → authoritative
-  // 3. useWatchContractEvent catches new burns in real-time
-  //
-  // Every user gets accurate numbers regardless of localStorage:
-  // - Cached value shows instantly (from their own localStorage)
-  // - Chain query overwrites with the true on-chain total within seconds
-  // - New users with no cache: see "—" briefly, then accurate number once getLogs returns
+  // Bug history: the previous version intermittently spiked the burnt total because
+  //   (a) useWatchContractEvent can re-emit the same log during Base reorgs, and
+  //   (b) when publicClient changed reference, the historical fetch re-ran and
+  //       overwrote totals that the watcher had already incremented.
+  // Fix: dedupe every counted log by txHash:logIndex via a ref-held Set, run the
+  // historical fetch exactly once, and use a dedicated reliable RPC for getLogs
+  // so its result isn't subject to wagmi transport rotation.
   const ZERO_ADDR = '0x0000000000000000000000000000000000000000' as `0x${string}`
-  const publicClient = usePublicClient()
-  
+
   // ERAGE first burn block on Base — narrows the query range for speed & reliability
-  // First ERAGE burn occurred at block 45386361, no need to scan earlier blocks
   const ERAGE_DEPLOY_BLOCK = 45386361n
 
-  // Fetch historical burn events on mount — chunked to avoid RPC limits
+  // Dedicated client for the one-shot historical scan. publicnode has been
+  // reliable for getLogs over wide ranges; wagmi's public client is used elsewhere.
+  const burnLogsClient = useMemo(() => createPublicClient({
+    chain: base,
+    transport: http('https://base-rpc.publicnode.com'),
+  }), [])
+
+  // Fingerprints of logs we've already counted ("txHash-logIndex"). Survives
+  // re-renders, never resets. Both the historical fetch and the live watcher
+  // consult this set before adding to the running total — eliminates double counts
+  // from reorg re-emissions and any overlap between getLogs and the watcher.
+  const countedBurnLogs = useRef<Set<string>>(new Set())
+  const historicalFetchStarted = useRef(false)
+  const historicalFetchDone = useRef(false)
+  // Burns added by the live watcher BEFORE the historical fetch finishes.
+  // After history loads we set erageBurnt = historicalTotal + pendingWatcherDelta,
+  // so the authoritative replacement doesn't drop a watcher-observed burn.
+  const pendingWatcherDelta = useRef<bigint>(0n)
+
+  // Fetch historical burn events ONCE on mount — never overwrite later
   useEffect(() => {
-    if (!publicClient) return
+    if (historicalFetchStarted.current) return
+    historicalFetchStarted.current = true
+
     const fetchHistoricalBurns = async () => {
       try {
-        const latestBlock = await publicClient.getBlockNumber()
+        const latestBlock = await burnLogsClient.getBlockNumber()
         const CHUNK = 10000n
         let total = 0n
-        
+
         for (let from = ERAGE_DEPLOY_BLOCK; from <= latestBlock; from += CHUNK) {
           const to = from + CHUNK > latestBlock ? latestBlock : from + CHUNK
-          const logs = await publicClient.getLogs({
+          const logs = await burnLogsClient.getLogs({
             address: CONTRACTS.GGX,
             event: {
               type: 'event',
@@ -1041,35 +1058,63 @@ export default function Dashboard() {
           })
           for (const log of logs) {
             const value = log.args.value ?? 0n
-            if (value > 0n) total += value
+            if (value === 0n) continue
+            const key = `${log.transactionHash}-${log.logIndex}`
+            // If the watcher already counted this log, its value is in
+            // pendingWatcherDelta — don't add it to `total` too.
+            if (countedBurnLogs.current.has(key)) continue
+            countedBurnLogs.current.add(key)
+            total += value
           }
         }
-        setErageBurnt(total)
-        localStorage.setItem('erageBurnt', total.toString())
+        // Authoritative replacement: history + anything the watcher caught
+        // during the scan that wasn't in our historical range yet.
+        const finalTotal = total + pendingWatcherDelta.current
+        pendingWatcherDelta.current = 0n
+        setErageBurnt(finalTotal)
+        historicalFetchDone.current = true
+        try { localStorage.setItem('erageBurnt', finalTotal.toString()) } catch {}
       } catch (err) {
         console.warn('Failed to fetch historical ERAGE burn logs:', err)
+        // Allow a retry on next mount/reload — don't lock out forever
+        historicalFetchStarted.current = false
       }
     }
     fetchHistoricalBurns()
-  }, [publicClient])
+  }, [burnLogsClient])
 
-  // Persist to localStorage on every change
+  // Persist to localStorage only after the historical fetch completes,
+  // so we don't poison the cache with an in-flight partial total.
   useEffect(() => {
+    if (!historicalFetchDone.current) return
     try { localStorage.setItem('erageBurnt', erageBurnt.toString()) } catch {}
   }, [erageBurnt])
-  
+
   useWatchContractEvent({
     address: CONTRACTS.GGX,
     abi: ERC20_ABI,
     eventName: 'Transfer',
     onLogs(logs) {
+      let delta = 0n
       for (const log of logs) {
-        if (log.args.to?.toLowerCase() === ZERO_ADDR) {
-          const value = log.args.value ?? 0n
-          if (value > 0n) {
-            setErageBurnt(prev => prev + value)
-          }
-        }
+        if (log.args.to?.toLowerCase() !== ZERO_ADDR) continue
+        const value = log.args.value ?? 0n
+        if (value === 0n) continue
+        const key = `${log.transactionHash}-${log.logIndex}`
+        // Reorg re-emissions arrive with the same txHash+logIndex — skip.
+        if (countedBurnLogs.current.has(key)) continue
+        countedBurnLogs.current.add(key)
+        delta += value
+      }
+      if (delta === 0n) return
+      if (historicalFetchDone.current) {
+        // Normal path: history is loaded, just append.
+        setErageBurnt(prev => prev + delta)
+      } else {
+        // History still loading: stash the delta so the final replacement
+        // can include it instead of clobbering it.
+        pendingWatcherDelta.current += delta
+        setErageBurnt(prev => prev + delta)
       }
     },
   })
