@@ -1010,10 +1010,11 @@ export default function Dashboard() {
   const ERAGE_DEPLOY_BLOCK = 45386361n
 
   // Dedicated client for the one-shot historical scan. publicnode has been
-  // reliable for getLogs over wide ranges; wagmi's public client is used elsewhere.
+  // reliable for getLogs but caps single requests at 50k blocks and times out
+  // around 10s; we use 49k chunks fired in parallel batches with per-chunk retry.
   const burnLogsClient = useMemo(() => createPublicClient({
     chain: base,
-    transport: http('https://base-rpc.publicnode.com'),
+    transport: http('https://base-rpc.publicnode.com', { timeout: 15_000 }),
   }), [])
 
   // Fingerprints of logs we've already counted ("txHash-logIndex"). Survives
@@ -1028,45 +1029,73 @@ export default function Dashboard() {
   // so the authoritative replacement doesn't drop a watcher-observed burn.
   const pendingWatcherDelta = useRef<bigint>(0n)
 
-  // Fetch historical burn events ONCE on mount — never overwrite later
+  // Fetch historical burn events ONCE on mount — never overwrite later.
+  // Strategy: split the full range into ~49k-block chunks (publicnode caps at 50k),
+  // fetch in parallel batches with per-chunk retry, so one slow chunk can't
+  // nuke the whole scan the way a single serial timeout does.
   useEffect(() => {
     if (historicalFetchStarted.current) return
     historicalFetchStarted.current = true
 
+    const CHUNK = 49000n
+    const PARALLEL = 8        // concurrent requests per batch
+    const MAX_RETRIES = 3
+
+    const fetchChunk = async (from: bigint, to: bigint, attempt = 0): Promise<any[]> => {
+      try {
+        return await burnLogsClient.getLogs({
+          address: CONTRACTS.GGX,
+          event: {
+            type: 'event',
+            name: 'Transfer',
+            inputs: [
+              { name: 'from', type: 'address', indexed: true },
+              { name: 'to', type: 'address', indexed: true },
+              { name: 'value', type: 'uint256', indexed: false },
+            ],
+          },
+          args: { to: ZERO_ADDR },
+          fromBlock: from,
+          toBlock: to,
+        })
+      } catch (err) {
+        if (attempt < MAX_RETRIES) {
+          // Exponential backoff: 500ms, 1s, 2s
+          await new Promise(r => setTimeout(r, 500 * 2 ** attempt))
+          return fetchChunk(from, to, attempt + 1)
+        }
+        throw err
+      }
+    }
+
     const fetchHistoricalBurns = async () => {
       try {
         const latestBlock = await burnLogsClient.getBlockNumber()
-        const CHUNK = 10000n
-        let total = 0n
 
+        // Build the full list of (from, to) ranges upfront
+        const ranges: Array<[bigint, bigint]> = []
         for (let from = ERAGE_DEPLOY_BLOCK; from <= latestBlock; from += CHUNK) {
-          const to = from + CHUNK > latestBlock ? latestBlock : from + CHUNK
-          const logs = await burnLogsClient.getLogs({
-            address: CONTRACTS.GGX,
-            event: {
-              type: 'event',
-              name: 'Transfer',
-              inputs: [
-                { name: 'from', type: 'address', indexed: true },
-                { name: 'to', type: 'address', indexed: true },
-                { name: 'value', type: 'uint256', indexed: false },
-              ],
-            },
-            args: { to: ZERO_ADDR },
-            fromBlock: from,
-            toBlock: to,
-          })
-          for (const log of logs) {
-            const value = log.args.value ?? 0n
-            if (value === 0n) continue
-            const key = `${log.transactionHash}-${log.logIndex}`
-            // If the watcher already counted this log, its value is in
-            // pendingWatcherDelta — don't add it to `total` too.
-            if (countedBurnLogs.current.has(key)) continue
-            countedBurnLogs.current.add(key)
-            total += value
+          const to = from + CHUNK - 1n > latestBlock ? latestBlock : from + CHUNK - 1n
+          ranges.push([from, to])
+        }
+
+        // Process ranges in parallel batches of PARALLEL
+        let total = 0n
+        for (let i = 0; i < ranges.length; i += PARALLEL) {
+          const batch = ranges.slice(i, i + PARALLEL)
+          const results = await Promise.all(batch.map(([f, t]) => fetchChunk(f, t)))
+          for (const logs of results) {
+            for (const log of logs) {
+              const value = log.args.value ?? 0n
+              if (value === 0n) continue
+              const key = `${log.transactionHash}-${log.logIndex}`
+              if (countedBurnLogs.current.has(key)) continue
+              countedBurnLogs.current.add(key)
+              total += value
+            }
           }
         }
+
         // Authoritative replacement: history + anything the watcher caught
         // during the scan that wasn't in our historical range yet.
         const finalTotal = total + pendingWatcherDelta.current
