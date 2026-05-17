@@ -1978,13 +1978,13 @@ export default function Dashboard() {
                       <p className="text-lg sm:text-xl font-bold font-mono">{formatNum(ggxSupply)}</p>
                       {ggxBackingValueUsd > 0 && (
                         <div className="mt-1 pt-1 border-t border-white/10">
-                          <p className="text-[10px] text-gray-400">Backing Price</p>
-                          <p className="text-base font-semibold text-[#FFD700]">${formatPrice(ggxBackingValueUsd)}</p>
+                          <p className="text-xs text-gray-400">Backing Price</p>
+                          <p className="text-lg font-semibold text-[#FFD700]">${formatPrice(ggxBackingValueUsd)}</p>
                         </div>
                       )}
                       <div className="mt-1 pt-1 border-t border-white/10">
                         <div className="flex justify-between items-center">
-                          <p className="text-[10px] text-gray-400">ERAGE Price</p>
+                          <p className="text-xs text-gray-400">ERAGE Price</p>
                           <a 
                             href={`https://app.uniswap.org/swap?inputCurrency=ETH&outputCurrency=${CONTRACTS.GGX}&chain=base`}
                             target="_blank"
@@ -1994,7 +1994,7 @@ export default function Dashboard() {
                             Swap <ArrowUpRight size={10} />
                           </a>
                         </div>
-                        <p className="text-base font-semibold text-[#10B981]">
+                        <p className="text-lg font-semibold text-[#10B981]">
                           {prices.ggxPrice > 0 
                             ? `$${formatPrice(prices.ggxPrice * prices.ethPriceUsd)}` 
                             : ggxBackingValueUsd > 0 
@@ -2002,7 +2002,7 @@ export default function Dashboard() {
                               : '—'}
                         </p>
                         {prices.ggxPrice > 0 && (
-                          <p className="text-[9px] text-gray-500">
+                          <p className="text-[10px] text-gray-500">
                             {formatPrice(prices.ggxPrice)} ETH
                           </p>
                         )}
@@ -2053,7 +2053,7 @@ export default function Dashboard() {
                         {/* Protocol TVL at bottom - single line */}
                         {backingBalances && prices.ethPriceUsd > 0 && (
                           <div className="mt-auto pt-1 border-t border-white/10">
-                            <p className="text-sm font-semibold text-[#FFD700] text-center">
+                            <p className="text-sm font-semibold text-[#FFD700] text-center whitespace-nowrap">
                               Protocol TVL = ${Math.ceil(
                                 parseFloat(formatUnits(backingBalances[0], 18)) * prices.esharePrice * prices.ethPriceUsd +
                                 parseFloat(formatUnits(backingBalances[1], 18)) * prices.ragePrice +
@@ -2420,30 +2420,30 @@ export default function Dashboard() {
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 text-sm">
                         <div className="relative bg-[#141416]/80 rounded-lg py-1.5 px-2 border border-[#FF6B35]/15">
                           <a href={`https://app.uniswap.org/swap?inputCurrency=${CONTRACTS.USDC}&outputCurrency=${CONTRACTS.WETH}&chain=base`} target="_blank" rel="noopener noreferrer" className="absolute top-1 right-1.5 text-[9px] text-gray-400/60 hover:text-gray-300 flex items-center gap-0.5 transition-colors">Swap <ArrowUpRight size={8} /></a>
-                          <p className="text-[11px] text-gray-400 text-center">ETH</p>
-                          <p className="font-mono text-[11px] sm:text-[13px] text-center leading-tight">{ethBal ? parseFloat(formatUnits(ethBal.value, ethBal.decimals)).toFixed(4) : '0.0000'}</p>
-                          <p className="text-[10px] text-[#10B981] text-center leading-tight">{ethBal && prices.ethPriceUsd > 0 ? `$${formatPrice(parseFloat(formatUnits(ethBal.value, ethBal.decimals)) * prices.ethPriceUsd)}` : '—'}</p>
+                          <p className="text-xs text-gray-400 text-center">ETH</p>
+                          <p className="font-mono text-[13px] sm:text-sm text-center leading-tight">{ethBal ? parseFloat(formatUnits(ethBal.value, ethBal.decimals)).toFixed(4) : '0.0000'}</p>
+                          <p className="text-[11px] text-[#10B981] text-center leading-tight">{ethBal && prices.ethPriceUsd > 0 ? `$${formatPrice(parseFloat(formatUnits(ethBal.value, ethBal.decimals)) * prices.ethPriceUsd)}` : '—'}</p>
                         </div>
                         <div className="relative bg-[#141416]/80 rounded-lg py-1.5 px-2 border border-[#FF6B35]/15">
                           <CopyAddr address={CONTRACTS.ESHARE} color="#8B5CF6" />
                           <a href={`https://app.uniswap.org/swap?inputCurrency=ETH&outputCurrency=${CONTRACTS.ESHARE}&chain=base`} target="_blank" rel="noopener noreferrer" className="absolute top-1 right-1.5 text-[9px] text-[#8B5CF6]/60 hover:text-[#8B5CF6] flex items-center gap-0.5 transition-colors">Swap <ArrowUpRight size={8} /></a>
-                          <p className="text-[11px] text-[#8B5CF6] text-center">ESHARE</p>
-                          <p className="font-mono text-[11px] sm:text-[13px] text-center leading-tight">{formatNum(eshareBal)}</p>
-                          <p className="text-[10px] text-[#10B981] text-center leading-tight">{eshareBal && prices.esharePrice > 0 && prices.ethPriceUsd > 0 ? `$${formatPrice(parseFloat(formatUnits(eshareBal, 18)) * prices.esharePrice * prices.ethPriceUsd)}` : '—'}</p>
+                          <p className="text-xs text-[#8B5CF6] text-center">ESHARE</p>
+                          <p className="font-mono text-[13px] sm:text-sm text-center leading-tight">{formatNum(eshareBal)}</p>
+                          <p className="text-[11px] text-[#10B981] text-center leading-tight">{eshareBal && prices.esharePrice > 0 && prices.ethPriceUsd > 0 ? `$${formatPrice(parseFloat(formatUnits(eshareBal, 18)) * prices.esharePrice * prices.ethPriceUsd)}` : '—'}</p>
                         </div>
                         <div className="relative bg-[#141416]/80 rounded-lg py-1.5 px-2 border border-[#FF6B35]/15">
                           <CopyAddr address={CONTRACTS.RAGE} color="#EF4444" />
                           <a href={`https://app.uniswap.org/swap?inputCurrency=ETH&outputCurrency=${CONTRACTS.RAGE}&chain=base`} target="_blank" rel="noopener noreferrer" className="absolute top-1 right-1.5 text-[9px] text-[#EF4444]/60 hover:text-[#EF4444] flex items-center gap-0.5 transition-colors">Swap <ArrowUpRight size={8} /></a>
-                          <p className="text-[11px] text-[#EF4444] text-center">RAGE</p>
-                          <p className="font-mono text-[11px] sm:text-[13px] text-center leading-tight">{formatNum(rageBal)}</p>
-                          <p className="text-[10px] text-[#10B981] text-center leading-tight">{rageBal && prices.ragePrice > 0 ? `$${formatPrice(parseFloat(formatUnits(rageBal, 18)) * prices.ragePrice)}` : '—'}</p>
+                          <p className="text-xs text-[#EF4444] text-center">RAGE</p>
+                          <p className="font-mono text-[13px] sm:text-sm text-center leading-tight">{formatNum(rageBal)}</p>
+                          <p className="text-[11px] text-[#10B981] text-center leading-tight">{rageBal && prices.ragePrice > 0 ? `$${formatPrice(parseFloat(formatUnits(rageBal, 18)) * prices.ragePrice)}` : '—'}</p>
                         </div>
                         <div className="relative bg-[#141416]/80 rounded-lg py-1.5 px-2 border border-[#FF6B35]/15">
                           <CopyAddr address={CONTRACTS.GGX} color="#FF6B35" />
                           <a href={`https://app.uniswap.org/swap?inputCurrency=ETH&outputCurrency=${CONTRACTS.GGX}&chain=base`} target="_blank" rel="noopener noreferrer" className="absolute top-1 right-1.5 text-[9px] text-[#FF6B35]/60 hover:text-[#FF6B35] flex items-center gap-0.5 transition-colors">Swap <ArrowUpRight size={8} /></a>
-                          <p className="text-[11px] text-[#FF6B35] text-center">ERAGE</p>
-                          <p className="font-mono text-[11px] sm:text-[13px] text-center leading-tight">{formatNum(ggxBal)}</p>
-                          <p className="text-[10px] text-[#10B981] text-center leading-tight">{ggxBal && prices.ggxPriceUsd > 0 ? `$${formatPrice(parseFloat(formatUnits(ggxBal, 18)) * prices.ggxPriceUsd)}` : '—'}</p>
+                          <p className="text-xs text-[#FF6B35] text-center">ERAGE</p>
+                          <p className="font-mono text-[13px] sm:text-sm text-center leading-tight">{formatNum(ggxBal)}</p>
+                          <p className="text-[11px] text-[#10B981] text-center leading-tight">{ggxBal && prices.ggxPriceUsd > 0 ? `$${formatPrice(parseFloat(formatUnits(ggxBal, 18)) * prices.ggxPriceUsd)}` : '—'}</p>
                         </div>
                       </div>
                       ) : (
