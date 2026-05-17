@@ -2104,12 +2104,12 @@ export default function Dashboard() {
                       <RatioChart history={backingRatioHistory} priceEfficiencyHistory={priceEfficiencyHistory} timeRange={timeRange} currentRatio={priceEfficiencyRatio} />
                     </div>
                     {/* Strategy Guide */}
-                    <div className="mt-1 pt-1 border-t border-white/5 text-xs text-gray-400">
+                    <div className="mt-1 pt-1 border-t border-white/5 text-[10px] sm:text-xs text-gray-400">
                       <p className="text-sm text-[#FFD700] font-bold mb-0.5 text-center">Arbitrage Strategies</p>
                       <div className="flex flex-col gap-0.5">
-                        <div className="flex items-start gap-1.5"><span className="inline-block w-2 h-2 rounded-full bg-[#10B981] mt-0.5 shrink-0"></span><span className="text-[#10B981]">Green Zone Efficiency</span><span className="text-gray-400">: MINT ERAGE <span className="text-[#10B981]">(cheaper)</span> → Sell on UniSwap</span></div>
-                        <div className="flex items-start gap-1.5"><span className="inline-block w-2 h-2 rounded-full bg-[#3B82F6] mt-0.5 shrink-0"></span><span className="text-[#3B82F6]">Neutral Zone Efficiency</span><span className="text-gray-400">: MINT ERAGE or Hold</span></div>
-                        <div className="flex items-start gap-1.5"><span className="inline-block w-2 h-2 rounded-full bg-[#EF4444] mt-0.5 shrink-0"></span><span className="text-[#EF4444]">Red Zone Efficiency</span><span className="text-gray-400">: BUY on UniSwap <span className="text-[#10B981]">(cheaper)</span> → Redeem</span></div>
+                        <div className="flex items-start gap-1.5 whitespace-nowrap"><span className="inline-block w-2 h-2 rounded-full bg-[#10B981] mt-0.5 shrink-0"></span><span className="text-[#10B981]">Green Zone Efficiency</span><span className="text-gray-400">: MINT ERAGE <span className="text-[#10B981]">(cheaper)</span> → Sell on UniSwap</span></div>
+                        <div className="flex items-start gap-1.5 whitespace-nowrap"><span className="inline-block w-2 h-2 rounded-full bg-[#3B82F6] mt-0.5 shrink-0"></span><span className="text-[#3B82F6]">Neutral Zone Efficiency</span><span className="text-gray-400">: MINT ERAGE or Hold</span></div>
+                        <div className="flex items-start gap-1.5 whitespace-nowrap"><span className="inline-block w-2 h-2 rounded-full bg-[#EF4444] mt-0.5 shrink-0"></span><span className="text-[#EF4444]">Red Zone Efficiency</span><span className="text-gray-400">: BUY on UniSwap <span className="text-[#10B981]">(cheaper)</span> → Redeem</span></div>
                       </div>
                     </div>
                   </div>
@@ -2472,6 +2472,8 @@ export default function Dashboard() {
                           <p className="text-[9px] text-gray-500 leading-snug text-center">
                             {inputToken !== 'GGX' ? (
                               <>
+                                {/* Adjustment button hidden — auto-slippage is fine at recommended trade sizes.
+                                    Logic preserved: to re-enable, uncomment the button below.
                                 <button
                                   onClick={() => {
                                     if (slippageMode === 'auto') {
@@ -2485,17 +2487,13 @@ export default function Dashboard() {
                                 >
                                   Auto-Slippage -Adjust-
                                 </button>
-                                {inputToken === 'ETH' && ' Recommended: 1 ETH or less per mint.'}
+                                */}
+                                {inputToken === 'ETH' && 'Recommended: 1 ETH or less per mint.'}
                               </>
                             ) : (
                               'Redeem ERAGE for full 1:1 ESHARE+RAGE backing'
                             )}
                           </p>
-                          {inputToken !== 'GGX' && slippagePct >= SLIPPAGE_MAX_PCT && (
-                            <p className="text-[9px] text-[#FFD700] flex items-center gap-1">
-                              <AlertTriangle size={9} /> At max slippage — trade size is large vs pool liquidity. Consider splitting into smaller mints.
-                            </p>
-                          )}
                       </div>
 
                       {/* Action Buttons */}
