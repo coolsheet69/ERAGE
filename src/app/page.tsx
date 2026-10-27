@@ -22,7 +22,8 @@ import { useChartHistory } from './useChartHistory'
 import { 
   TrendingUp, Wallet, Zap, ArrowUpRight, Flame, 
   RefreshCw, Settings, Shield, AlertTriangle, Pause, Play,
-  Trash2, DollarSign, MessageCircle, FileText, Copy, Check
+  Trash2, DollarSign, MessageCircle, FileText, Copy, Check,
+  LogOut, X
 } from 'lucide-react'
 
 // ============ LEGACY BURNT VALUES (v1 + v2 + v3 + v4 contracts) ============
@@ -53,6 +54,13 @@ const CONTRACTS = {
   QUOTER_V2: '0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a' as `0x${string}`,   // Uniswap V3 QuoterV2 on Base (used by Optimized Zap for intelligent splits)
   ERAGE_RAGE_LP: '0x9e7C2Ce84346d57EdCE3f38A9e6585d4d0317F7d' as `0x${string}`,  // ERAGE-RAGE V3 1% pool
   ERAGE_ESHARE_LP: '0x2CFD00bf5B36C7b4Ff8D45eC3D7254ABA34c881f' as `0x${string}`, // ERAGE-ESHARE V3 1% pool
+  HESTIA: '0xBC7755a153E852CF76cCCDdb4C2e7c368f6259D8' as `0x${string}`,
+  PLAZM: '0xA1FBB38bF486b97108aA87E92008187CA06998f6' as `0x${string}`,
+  // ERAGE-HESTIA and ERAGE-PLAZM pools. Pair, fee tier and symbols are read on-chain
+  // (see usePoolSnapshot), so it doesn't matter which address is which. The HESTIA /
+  // PLAZM side is counted in TVL, priced off ERAGE via the pool's own spot price.
+  TVL_POOL_A: '0x6c9f4c88192a8960ffa6457c8e47894ce1a7869a' as `0x${string}`,
+  TVL_POOL_B: '0x0d95223e11b42f206230050ff8a12ff2eecde821' as `0x${string}`,
 }
 
 // V3 Fee tiers (in basis points)
@@ -132,6 +140,8 @@ const ERC20_ABI = [
   { name: 'totalSupply', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
   { name: 'approve', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'spender', type: 'address' }, { name: 'amount', type: 'uint256' }], outputs: [{ type: 'bool' }] },
   { name: 'allowance', type: 'function', stateMutability: 'view', inputs: [{ name: 'owner', type: 'address' }, { name: 'spender', type: 'address' }], outputs: [{ type: 'uint256' }] },
+  { name: 'decimals', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint8' }] },
+  { name: 'symbol', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] },
   { name: 'Transfer', type: 'event', inputs: [{ name: 'from', type: 'address', indexed: true }, { name: 'to', type: 'address', indexed: true }, { name: 'value', type: 'uint256', indexed: false }] },
 ] as const
 
@@ -141,6 +151,14 @@ const PAIR_ABI = [
   { name: 'liquidity', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint128' }] },
   { name: 'token0', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] },
   { name: 'token1', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] },
+] as const
+
+// Minimal CL-pool reads for the auto-detected TVL pools. slot0 decodes only sqrtPriceX96,
+// so it works whether the pool returns 6 or 7 slot0 fields. Both calls may fail on
+// non-CL pools; that only disables spot-price fallback, balances still count.
+const POOL_PRICE_ABI = [
+  { name: 'slot0', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: 'sqrtPriceX96', type: 'uint160' }] },
+  { name: 'fee', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint24' }] },
 ] as const
 
 const GGX_ABI = [
@@ -234,6 +252,22 @@ const ZAP_ABI = [
 ] as const
 
 // ============ UTILITY FUNCTIONS ============
+const formatAmount = (num: number): string => {
+  if (!num) return '0.00'
+  if (num < 0.000001) return '0.000000'
+  if (num < 0.01) return num.toFixed(6)
+  if (num < 1) return num.toFixed(4)
+  if (num < 1000) return num.toFixed(2)
+  if (num < 1000000) return `${(num / 1000).toFixed(2)}K`
+  return `${(num / 1000000).toFixed(2)}M`
+}
+
+// Whole dollars at $1K+, cents below — keeps the supply value short enough for the stat card
+const formatUsdCompact = (num: number): string =>
+  num >= 1000
+    ? `$${Math.round(num).toLocaleString('en-US')}`
+    : `$${num.toFixed(2)}`
+
 const formatNum = (val: bigint | undefined, dec = 18): string => {
   if (!val) return '0.00'
   const num = parseFloat(formatUnits(val, dec))
@@ -258,6 +292,8 @@ const formatPrice = (price: number): string => {
   if (price < 1) return price.toFixed(4)
   return price.toFixed(2)
 }
+
+const DEFAULT_TX_LABEL = 'Transaction confirmed'
 
 // ============ COPY ADDRESS BUTTON ============
 function CopyAddr({ address, color }: { address: string; color: string }) {
@@ -286,7 +322,7 @@ function CopyAddr({ address, color }: { address: string; color: string }) {
 }
 
 // ============ RATIO CHART COMPONENT ============
-type TimeRange = '4h' | '1d' | '1w' | '2w'
+type TimeRange = '4h' | '1d' | '1w'
 
 function RatioChart({ 
   history, 
@@ -302,6 +338,7 @@ function RatioChart({
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [dotPosition, setDotPosition] = useState<{ x: number; y: number } | null>(null)
+  const dotPosRef = useRef<{ x: number; y: number } | null>(null)
   const animFrameRef = useRef<number>(0)
   
   // Filter history based on time range
@@ -309,8 +346,7 @@ function RatioChart({
     const now = Date.now()
     const cutoff = timeRange === '4h' ? now - 4 * 60 * 60 * 1000 
                  : timeRange === '1d' ? now - 24 * 60 * 60 * 1000 
-                 : timeRange === '1w' ? now - 7 * 24 * 60 * 60 * 1000
-                 : now - 14 * 24 * 60 * 60 * 1000
+                 : now - 7 * 24 * 60 * 60 * 1000
     return history.filter(h => h.time >= cutoff)
   }, [history, timeRange])
   
@@ -319,8 +355,7 @@ function RatioChart({
     const now = Date.now()
     const cutoff = timeRange === '4h' ? now - 4 * 60 * 60 * 1000 
                  : timeRange === '1d' ? now - 24 * 60 * 60 * 1000 
-                 : timeRange === '1w' ? now - 7 * 24 * 60 * 60 * 1000
-                 : now - 14 * 24 * 60 * 60 * 1000
+                 : now - 7 * 24 * 60 * 60 * 1000
     const filtered = priceEfficiencyHistory.filter(h => h.time >= cutoff)
     
     // Downsample for rendering performance — max ~400 points on the chart
@@ -354,9 +389,15 @@ function RatioChart({
       // Guard against zero dimensions
       if (rect.width === 0 || rect.height === 0) return
       
-      canvas.width = rect.width * dpr
-      canvas.height = rect.height * dpr
-      ctx.scale(dpr, dpr)
+      // Only reallocate the backing store when the size actually changes —
+      // doing it every frame (60fps) was a big chunk of the chart's CPU cost.
+      const targetW = Math.round(rect.width * dpr)
+      const targetH = Math.round(rect.height * dpr)
+      if (canvas.width !== targetW || canvas.height !== targetH) {
+        canvas.width = targetW
+        canvas.height = targetH
+      }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       
       const width = rect.width
       const height = rect.height
@@ -380,10 +421,10 @@ function RatioChart({
       const chartHeight = height - padding.top - padding.bottom
 
       // ── Zone thresholds ──
-      const GREEN_ZONE = 1.035
-      const RED_ZONE = 0.965
+      const GREEN_ZONE = 1.040
+      const RED_ZONE = 0.960
 
-      // ── Green Zone (top): above 1.035 — "Greenzone Efficiency Strategy" ──
+      // ── Green Zone (top): above 1.040 — "Greenzone Efficiency Strategy" ──
       if (filteredPriceEfficiency.length > 0 && maxRatio > GREEN_ZONE) {
         const greenY = padding.top + chartHeight - ((GREEN_ZONE - minRatio) / ratioRange) * chartHeight
         const topY = padding.top
@@ -402,7 +443,7 @@ function RatioChart({
         }
       }
 
-      // ── Blue Neutral Zone: between 0.965 and 1.035 ──
+      // ── Blue Neutral Zone: between 0.960 and 1.040 ──
       if (filteredPriceEfficiency.length > 0) {
         const upperY = padding.top + chartHeight - ((GREEN_ZONE - minRatio) / ratioRange) * chartHeight
         const lowerY = padding.top + chartHeight - ((RED_ZONE - minRatio) / ratioRange) * chartHeight
@@ -418,7 +459,7 @@ function RatioChart({
         }
       }
 
-      // ── Red Zone (bottom): below 0.965 — "Redzone Efficiency Strategy" ──
+      // ── Red Zone (bottom): below 0.960 — "Redzone Efficiency Strategy" ──
       if (filteredPriceEfficiency.length > 0 && minRatio < RED_ZONE) {
         const redY = padding.top + chartHeight - ((RED_ZONE - minRatio) / ratioRange) * chartHeight
         const bottomY = padding.top + chartHeight
@@ -454,7 +495,7 @@ function RatioChart({
         ctx.stroke()
         
         // Skip auto grid labels between 0.95 and 1.05 — we have static labels
-        // for 0.965, 1.000, and 1.035 already, so no need for numbers in that range
+        // for 0.960, 1.000, and 1.040 already, so no need for numbers in that range
         if (ratioVal >= 0.95 && ratioVal <= 1.05) continue
         ctx.fillText(ratioVal.toFixed(3), padding.left - 4, y + 3)
       }
@@ -478,9 +519,9 @@ function RatioChart({
         ctx.fillText('1.000', padding.left - 4, parityY + 3)
       }
 
-      // ── 1.035 threshold line (orange dashed) ──
-      if (filteredPriceEfficiency.length > 0 && minRatio < 1.035 && maxRatio > 1.035) {
-        const threshY = padding.top + chartHeight - ((1.035 - minRatio) / ratioRange) * chartHeight
+      // ── 1.040 threshold line (orange dashed) ──
+      if (filteredPriceEfficiency.length > 0 && minRatio < GREEN_ZONE && maxRatio > GREEN_ZONE) {
+        const threshY = padding.top + chartHeight - ((GREEN_ZONE - minRatio) / ratioRange) * chartHeight
         ctx.strokeStyle = 'rgba(249, 115, 22, 0.4)'
         ctx.setLineDash([8, 4])
         ctx.lineWidth = 1
@@ -495,12 +536,12 @@ function RatioChart({
         ctx.fillStyle = '#F97316'
         ctx.textAlign = 'right'
         ctx.font = '9px sans-serif'
-        ctx.fillText('1.035', padding.left - 4, threshY + 3)
+        ctx.fillText(GREEN_ZONE.toFixed(3), padding.left - 4, threshY + 3)
       }
 
-      // ── 0.965 threshold line (orange dashed) ──
-      if (filteredPriceEfficiency.length > 0 && minRatio < 0.965 && maxRatio > 0.965) {
-        const threshY = padding.top + chartHeight - ((0.965 - minRatio) / ratioRange) * chartHeight
+      // ── 0.960 threshold line (orange dashed) ──
+      if (filteredPriceEfficiency.length > 0 && minRatio < RED_ZONE && maxRatio > RED_ZONE) {
+        const threshY = padding.top + chartHeight - ((RED_ZONE - minRatio) / ratioRange) * chartHeight
         ctx.strokeStyle = 'rgba(249, 115, 22, 0.4)'
         ctx.setLineDash([8, 4])
         ctx.lineWidth = 1
@@ -515,7 +556,7 @@ function RatioChart({
         ctx.fillStyle = '#F97316'
         ctx.textAlign = 'right'
         ctx.font = '9px sans-serif'
-        ctx.fillText('0.965', padding.left - 4, threshY + 3)
+        ctx.fillText(RED_ZONE.toFixed(3), padding.left - 4, threshY + 3)
       }
 
       // Draw X-axis time labels
@@ -600,8 +641,13 @@ function RatioChart({
         const lastX = padding.left + chartWidth
         const lastY = padding.top + chartHeight - ((lastPoint.ratio - minRatio) / ratioRange) * chartHeight
         
-        // Store position for overlay
-        setDotPosition({ x: lastX, y: lastY })
+        // Store position for overlay — only when it moves, otherwise this
+        // re-rendered the component on every animation frame
+        const prevDot = dotPosRef.current
+        if (!prevDot || Math.abs(prevDot.x - lastX) > 0.5 || Math.abs(prevDot.y - lastY) > 0.5) {
+          dotPosRef.current = { x: lastX, y: lastY }
+          setDotPosition({ x: lastX, y: lastY })
+        }
 
         // Outer glow ring (pulsing)
         ctx.save()
@@ -668,13 +714,26 @@ function RatioChart({
       }
     }
     
-    // Animation loop for pulsing effect
-    const animate = () => {
-      pulsePhase += 0.04
-      drawChart(pulsePhase)
+    // Animation loop for pulsing effect (static frame when the user prefers reduced motion)
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    // ~30fps: the pulse looks identical to 60fps at half the draw cost.
+    // Phase advances by elapsed time, so the pulse speed is the same as before.
+    const FRAME_MS = 1000 / 30
+    let lastDraw = 0
+    const animate = (now: number) => {
+      if (now - lastDraw >= FRAME_MS) {
+        pulsePhase += 0.04 * ((now - (lastDraw || now - FRAME_MS)) / (1000 / 60))
+        lastDraw = now
+        drawChart(pulsePhase)
+      }
       animFrameRef.current = requestAnimationFrame(animate)
     }
-    animFrameRef.current = requestAnimationFrame(animate)
+    if (reduceMotion) {
+      pulsePhase = Math.PI / 2
+      drawChart(pulsePhase)
+    } else {
+      animFrameRef.current = requestAnimationFrame(animate)
+    }
     
     // Handle resize
     const handleResize = () => drawChart(pulsePhase)
@@ -736,6 +795,659 @@ function UniswapWidget({ ggxAddress }: { ggxAddress: string }) {
         }}
       />
     </div>
+  )
+}
+
+// ============ AUTO-DETECTED POOL SNAPSHOT ============
+// Reads everything needed to value a pool's reserves without hardcoding its pair:
+// token0/token1, their balances held by the pool, decimals, symbols, and (if it is a
+// concentrated-liquidity pool) the spot price + fee tier.
+type PoolSnapshot = {
+  pool: `0x${string}`
+  token0?: `0x${string}`
+  token1?: `0x${string}`
+  bal0?: bigint
+  bal1?: bigint
+  dec0?: number
+  dec1?: number
+  sym0?: string
+  sym1?: string
+  fee?: number
+  sqrtPriceX96?: bigint
+}
+
+// `enabled` lets the page hold these reads back until the price feeds have loaded,
+// so they never compete with the reads the chart and stats depend on.
+// token0/token1/decimals/symbol/fee never change, so they're fetched once and cached.
+const STATIC_READ = { staleTime: Infinity, gcTime: Infinity, refetchOnWindowFocus: false } as const
+
+function usePoolSnapshot(pool: `0x${string}`, enabled: boolean): PoolSnapshot {
+  const { data: token0 } = useReadContract({ address: pool, abi: PAIR_ABI, functionName: 'token0', query: { enabled, ...STATIC_READ } })
+  const { data: token1 } = useReadContract({ address: pool, abi: PAIR_ABI, functionName: 'token1', query: { enabled, ...STATIC_READ } })
+  const { data: fee } = useReadContract({ address: pool, abi: POOL_PRICE_ABI, functionName: 'fee', query: { enabled, retry: false, ...STATIC_READ } })
+  const { data: sqrtPriceX96 } = useReadContract({ address: pool, abi: POOL_PRICE_ABI, functionName: 'slot0', query: { enabled, refetchInterval: 60000, retry: false } })
+  const { data: bal0 } = useReadContract({ address: token0, abi: ERC20_ABI, functionName: 'balanceOf', args: [pool], query: { enabled: enabled && !!token0, refetchInterval: 60000 } })
+  const { data: bal1 } = useReadContract({ address: token1, abi: ERC20_ABI, functionName: 'balanceOf', args: [pool], query: { enabled: enabled && !!token1, refetchInterval: 60000 } })
+  const { data: dec0 } = useReadContract({ address: token0, abi: ERC20_ABI, functionName: 'decimals', query: { enabled: enabled && !!token0, ...STATIC_READ } })
+  const { data: dec1 } = useReadContract({ address: token1, abi: ERC20_ABI, functionName: 'decimals', query: { enabled: enabled && !!token1, ...STATIC_READ } })
+  const { data: sym0 } = useReadContract({ address: token0, abi: ERC20_ABI, functionName: 'symbol', query: { enabled: enabled && !!token0, ...STATIC_READ } })
+  const { data: sym1 } = useReadContract({ address: token1, abi: ERC20_ABI, functionName: 'symbol', query: { enabled: enabled && !!token1, ...STATIC_READ } })
+  return { pool, token0, token1, bal0, bal1, dec0, dec1, sym0, sym1, fee, sqrtPriceX96 }
+}
+
+// ============ TVL TYPES / HELPERS ============
+type TvlItem = {
+  key: string
+  label: string
+  color: string
+  amounts: { amount: number; symbol: string }[]
+  usd: number | null // null = no price source for the counted side(s)
+}
+
+const TOKEN_ACCENT: Record<string, string> = {
+  [CONTRACTS.ESHARE.toLowerCase()]: '#8B5CF6',
+  [CONTRACTS.RAGE.toLowerCase()]: '#EF4444',
+  [CONTRACTS.WETH.toLowerCase()]: '#3B82F6',
+  [CONTRACTS.USDC.toLowerCase()]: '#3B82F6',
+  [CONTRACTS.HESTIA.toLowerCase()]: '#F59E0B',
+  [CONTRACTS.PLAZM.toLowerCase()]: '#22D3EE',
+}
+
+function poolSnapshotToTvlItem(snap: PoolSnapshot, tokenUsd: Record<string, number>): TvlItem | null {
+  if (!snap.token0 || !snap.token1 || snap.dec0 === undefined || snap.dec1 === undefined) return null
+  const erage = CONTRACTS.GGX.toLowerCase()
+  const t0 = snap.token0.toLowerCase()
+  const t1 = snap.token1.toLowerCase()
+  let p0 = tokenUsd[t0] ?? 0
+  let p1 = tokenUsd[t1] ?? 0
+
+  // If only one side has a known USD price (e.g. ERAGE vs HESTIA/PLAZM), derive the other
+  // from the pool's own price. Concentrated-liquidity pools: sqrtPriceX96 from slot0.
+  // Classic x*y=k pools (no slot0): reserve ratio, which is exact for those.
+  if ((p0 > 0) !== (p1 > 0)) {
+    let token1PerToken0 = 0
+    if (snap.sqrtPriceX96 && snap.sqrtPriceX96 > 0n) {
+      const r = Number(snap.sqrtPriceX96) / 2 ** 96
+      token1PerToken0 = r * r * 10 ** (snap.dec0 - snap.dec1)
+    } else if (snap.bal0 && snap.bal1 && snap.bal0 > 0n && snap.bal1 > 0n) {
+      token1PerToken0 = parseFloat(formatUnits(snap.bal1, snap.dec1)) / parseFloat(formatUnits(snap.bal0, snap.dec0))
+    }
+    if (token1PerToken0 > 0) {
+      if (p0 === 0) p0 = token1PerToken0 * p1
+      else p1 = p0 / token1PerToken0
+    }
+  }
+
+  const shortAddr = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`
+  const sides = [
+    { addr: t0, bal: snap.bal0, dec: snap.dec0, sym: snap.sym0 || shortAddr(t0), price: p0 },
+    { addr: t1, bal: snap.bal1, dec: snap.dec1, sym: snap.sym1 || shortAddr(t1), price: p1 },
+  ]
+  // Same convention as the hand-wired pools: the ERAGE side is not counted, since
+  // ERAGE is itself a claim on the ESHARE+RAGE backing already in TVL.
+  const counted = sides.filter((sd) => sd.addr !== erage)
+  const amounts = counted.map((sd) => ({ amount: sd.bal ? parseFloat(formatUnits(sd.bal, sd.dec)) : 0, symbol: sd.sym }))
+  const pricedSides = counted.filter((sd) => sd.price > 0)
+  const usd = pricedSides.length > 0
+    ? counted.reduce((sum, sd, i) => sum + (sd.price > 0 ? amounts[i].amount * sd.price : 0), 0)
+    : null
+
+  const feeLabel = snap.fee !== undefined ? ` (${snap.fee / 10000}%)` : ''
+  const accent = TOKEN_ACCENT[counted[0]?.addr ?? ''] ?? '#FFD700'
+  return {
+    key: snap.pool,
+    label: `${sides[0].sym}-${sides[1].sym}${feeLabel}`,
+    color: accent,
+    amounts,
+    usd,
+  }
+}
+
+// ============ RATCHET NUMBER ============
+// Odometer-style number: each digit rolls into place, right-most first. Rolls up from
+// zero on first render and flashes green with a ▲ whenever the value ticks up —
+// the ratchet, made visible.
+const DIGITS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+function RatchetNumber({ value, className = '' }: { value: string; className?: string }) {
+  const [shown, setShown] = useState(() => value.replace(/\d/g, '0'))
+  const [rising, setRising] = useState(false)
+  const prevNumRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setShown(value))
+    const num = parseFloat(value.replace(/[^0-9.]/g, ''))
+    let timer: ReturnType<typeof setTimeout> | undefined
+    if (!isNaN(num)) {
+      if (prevNumRef.current !== null && num > prevNumRef.current) {
+        setRising(true)
+        timer = setTimeout(() => setRising(false), 1600)
+      }
+      prevNumRef.current = num
+    }
+    return () => {
+      cancelAnimationFrame(raf)
+      if (timer) clearTimeout(timer)
+    }
+  }, [value])
+
+  const chars = shown.split('')
+  return (
+    <span className={`ratchet ${rising ? 'ratchet-rising' : ''} ${className}`}>
+      <span className="sr-only">{value}</span>
+      {chars.map((ch, i) => {
+        const fromRight = chars.length - 1 - i
+        if (ch >= '0' && ch <= '9') {
+          const d = Number(ch)
+          return (
+            <span key={`d${fromRight}`} className="ratchet-col" aria-hidden="true">
+              <span
+                className="ratchet-strip"
+                style={{ transform: `translateY(calc(${-d} * var(--ratchet-h)))`, transitionDelay: `${fromRight * 40}ms` }}
+              >
+                {DIGITS.map((n) => <span key={n}>{n}</span>)}
+              </span>
+            </span>
+          )
+        }
+        return <span key={`s${fromRight}`} className="ratchet-sep" aria-hidden="true">{ch}</span>
+      })}
+    </span>
+  )
+}
+
+// ============ LOGO + BABIES ============
+// The big ERAGE logo sits near the top of its play area, glowing and slowly breathing
+// (CSS: .logo-breathe on its wrapper). Click it and it shakes and "redeems" itself:
+// pops out one baby ESHARE and one baby RAGE logo and shrinks a step.
+//
+// Babies bounce around the play area under low gravity, with lively bounces that die
+// down to a stop. After a while each one slowly floats back up and merges into the big
+// logo, which grows one equal step per pair that returns, back to full size once
+// they're all home.
+//
+// Babies resting on the floor shuffle slowly away from the cursor, rolling as they go.
+// Grab any baby (press on it, on the floor, mid-air, or floating home) and drag to
+// throw it; let go without moving and it just drops. Grabbing restarts its merge
+// timer. Babies collide and bounce off each other (except ones floating home, which
+// pass through so they can always reach the big logo).
+// Drag a baby into the big logo and it gets eaten on the spot: the logo gulps it down,
+// grows its step, and spits out a burst of green dollar signs.
+const LOGO_MIN_SCALE = 0.175
+const PAIRS_TO_MIN = 20             // pairs out at which the logo reaches its smallest size
+                                    // (shrinks/grows in equal linear steps, one per pair)
+// At PAIRS_TO_MIN pairs out (40 babies) the logo is fully "redeemed": it's at its
+// smallest, and clicking it just gives a feeble empty shake. No babies are ever
+// forced home early, so nothing rushes back while you keep clicking.
+const BABY_HOME_MIN_MS = 45000      // how long a baby plays before heading home...
+const BABY_HOME_RANDOM_MS = 30000   // ...plus up to this much extra (so 45–75s)
+const SHAKE_MS = 550
+
+// Baby physics (per 60fps frame)
+const BABY_GRAVITY = 0.12
+const BABY_AIR_DRAG = 0.998
+const BABY_WALL_BOUNCE = 0.85       // fraction of speed kept off the side walls
+const BABY_FLOOR_BOUNCE = 0.75      // ...and off the floor / ceiling
+const BABY_SETTLE_SPEED = 1.2       // floor bounces slower than this just stop
+const BABY_MAX_THROW = 38           // cap on release speed
+const BABY_HOME_PULL = 0.175        // starting pull toward the big logo when merging
+const BABY_HOME_PULL_GROWTH = 0.6   // extra pull it builds up over ~8s if blocked
+const BABY_COLLIDE_BOUNCE = 0.8     // bounciness of baby-on-baby hits
+const BABY_COLLIDE_RADIUS = 0.46    // collision circle radius as a fraction of size
+
+function BouncingLogo({ className }: { className: string }) {
+  const imgRef = useRef<HTMLImageElement>(null)
+
+  useEffect(() => {
+    const el = imgRef.current
+    const wrap = el?.parentElement    // .logo-breathe span (glow + pulse)
+    const zone = wrap?.parentElement  // the play area column
+    if (!el || !wrap || !zone) return
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+
+    // Babies live in a layer inside the play area, behind the big logo
+    const layer = document.createElement('div')
+    layer.setAttribute('aria-hidden', 'true')
+    Object.assign(layer.style, { position: 'absolute', inset: '0', pointerEvents: 'none', zIndex: '0' })
+    zone.prepend(layer)
+    wrap.style.position = 'relative'
+    wrap.style.zIndex = '1'
+    zone.style.touchAction = 'none' // let touch drags throw babies instead of scrolling
+
+    // Positions are in play-area coordinates: (0,0) = center of the column
+    let raf = 0
+    let running = false
+    let lastT = 0
+    let scale = 1
+    let scaleVel = 0
+    let shakeStart = -Infinity
+    let shakeAmp = 1 // 1 = full shake on a hit, smaller for an empty "dud" click
+    let pointer: { x: number; y: number } | null = null // viewport coords
+
+    type Baby = { node: HTMLImageElement; x: number; y: number; vx: number; vy: number; rot: number; vr: number; size: number; homeAt: number }
+    const babies: Baby[] = []
+
+    // The baby currently held, plus recent pointer samples for the throw velocity
+    let held: { baby: Baby; offX: number; offY: number; pointerId: number } | null = null
+    let samples: { x: number; y: number; t: number }[] = []
+
+    const clampV = (v: number, lim: number) => Math.max(-lim, Math.min(lim, v))
+    // Size is linear in pairs out: every pair knocked out shrinks it one equal step, and
+    // every pair that merges back grows it one equal step, so growth is visible right
+    // away even from minimum size.
+    const pairsOut = () => Math.ceil(babies.length / 2)
+    const scaleTargetNow = () =>
+      1 - (1 - LOGO_MIN_SCALE) * (Math.min(pairsOut(), PAIRS_TO_MIN) / PAIRS_TO_MIN)
+    const homeDelay = () => BABY_HOME_MIN_MS + Math.random() * BABY_HOME_RANDOM_MS
+    const toLocal = (clientX: number, clientY: number, zr: DOMRect) => ({
+      x: clientX - (zr.left + zr.width / 2),
+      y: clientY - (zr.top + zr.height / 2),
+    })
+    const isOnFloor = (b: Baby, zh: number) => b.y >= zh / 2 - b.size / 2 - 3 && Math.abs(b.vy) < 2
+
+    // Center of the big logo in play-area coords (wrapper isn't moved by the shake)
+    const logoCenter = (zr: DOMRect) => {
+      const wr = wrap.getBoundingClientRect()
+      return {
+        x: wr.left + wr.width / 2 - (zr.left + zr.width / 2),
+        y: wr.top + wr.height / 2 - (zr.top + zr.height / 2),
+      }
+    }
+
+    const absorb = (i: number) => {
+      if (held?.baby === babies[i]) return // never swallow the one you're holding
+      babies[i].node.remove()
+      babies.splice(i, 1)
+      scaleVel += 0.035 // little gulp
+    }
+
+    // ---- Dollar signs: spat out when you feed it a baby ----
+    type Coin = { node: HTMLSpanElement; x: number; y: number; vx: number; vy: number; rot: number; vr: number; born: number; life: number }
+    const coins: Coin[] = []
+
+    const spitDollars = (from: { x: number; y: number }, now: number) => {
+      const count = 7 + Math.floor(Math.random() * 5)
+      for (let k = 0; k < count; k++) {
+        const node = document.createElement('span')
+        node.textContent = '$'
+        const fontSize = 14 + Math.random() * 12
+        Object.assign(node.style, {
+          position: 'absolute', left: '0', top: '0',
+          fontSize: `${fontSize}px`, fontWeight: '800', lineHeight: '1',
+          color: '#10B981', textShadow: '0 0 8px rgba(16,185,129,0.8), 0 0 2px #fff',
+          willChange: 'transform, opacity', userSelect: 'none',
+        })
+        layer.appendChild(node)
+        // Fountain upward and out
+        const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 1.2
+        const speed = 3 + Math.random() * 5
+        coins.push({
+          node, x: from.x, y: from.y,
+          vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+          rot: (Math.random() - 0.5) * 40, vr: (Math.random() - 0.5) * 14,
+          born: now, life: 1100 + Math.random() * 700,
+        })
+      }
+    }
+
+    // Feed the held baby to the big logo
+    const consumeHeld = (now: number, from: { x: number; y: number }) => {
+      if (!held) return
+      const b = held.baby
+      try { zone.releasePointerCapture(held.pointerId) } catch { /* ignore */ }
+      held = null
+      samples = []
+      zone.style.cursor = ''
+      b.node.remove()
+      babies.splice(babies.indexOf(b), 1)
+      scaleVel += 0.12            // big satisfied gulp
+      shakeStart = now
+      shakeAmp = 0.5              // happy little wiggle
+      spitDollars(from, now)
+    }
+
+    const babyAt = (px: number, py: number) => {
+      for (let i = babies.length - 1; i >= 0; i--) {
+        const b = babies[i]
+        if (Math.hypot(px - b.x, py - b.y) <= Math.max(b.size * 0.75, 18)) return b
+      }
+      return null
+    }
+
+    const frame = (t: number) => {
+      const dt = lastT ? Math.min((t - lastT) / 16.67, 3) : 1
+      lastT = t
+      const zr = zone.getBoundingClientRect()
+      const zw = zr.width
+      const zh = zr.height
+      const home = logoCenter(zr)
+      const vis = el.offsetWidth * scale
+      const p = pointer ? toLocal(pointer.x, pointer.y, zr) : null
+
+      // ---- Big logo: size spring + shake ----
+      scaleVel = (scaleVel + (scaleTargetNow() - scale) * 0.16 * dt) * Math.pow(0.72, dt)
+      scale += scaleVel * dt
+      const shakeP = (t - shakeStart) / SHAKE_MS
+      let sx = 0
+      let sr = 0
+      if (shakeP < 1) {
+        const decay = 1 - shakeP
+        sx = Math.sin((t - shakeStart) / 18) * 9 * decay * shakeAmp
+        sr = Math.sin((t - shakeStart) / 25) * 7 * decay * shakeAmp
+      }
+      el.style.transform = `translateX(${sx.toFixed(2)}px) rotate(${sr.toFixed(2)}deg) scale(${scale.toFixed(3)})`
+
+      // ---- Babies ----
+      for (let i = babies.length - 1; i >= 0; i--) {
+        const b = babies[i]
+        const half = b.size / 2
+        const maxX = zw / 2 - half
+        const maxY = zh / 2 - half
+
+        // Held: stick to the cursor, tilt with the drag
+        if (held?.baby === b && p) {
+          const nx = clampV(p.x + held.offX, maxX)
+          const ny = clampV(p.y + held.offY, maxY)
+          b.vx = (nx - b.x) / dt
+          b.vy = (ny - b.y) / dt
+          b.x = nx
+          b.y = ny
+          b.rot += b.vx * 1.5 * dt
+          // Dragged into the big logo's mouth? Nom.
+          if (Math.hypot(b.x - home.x, b.y - home.y) < Math.max(vis * 0.42, 22)) {
+            consumeHeld(t, home)
+          }
+          continue
+        }
+
+        if (t >= b.homeAt) {
+          // Float back up to the big logo, slowly, pulling harder the longer it takes
+          const dx = home.x - b.x
+          const dy = home.y - b.y
+          const dist = Math.hypot(dx, dy) || 0.001
+          const pull = BABY_HOME_PULL + Math.min(BABY_HOME_PULL_GROWTH, (t - b.homeAt) / 8000)
+          b.vx = (b.vx + (dx / dist) * pull * dt) * Math.pow(0.93, dt)
+          b.vy = (b.vy + (dy / dist) * pull * dt) * Math.pow(0.93, dt)
+          if (dist < vis * 0.35) {
+            absorb(i)
+            continue
+          }
+        } else {
+          b.vy += BABY_GRAVITY * dt
+          b.vx *= Math.pow(BABY_AIR_DRAG, dt)
+
+          // Resting on the floor? Shuffle slowly away from a nearby cursor.
+          if (isOnFloor(b, zh)) {
+            if (p && !held) {
+              const dx = b.x - p.x
+              const dist = Math.hypot(dx, b.y - p.y) || 0.001
+              const Rf = 70
+              if (dist < Rf) {
+                const dir = Math.abs(dx) > 1 ? Math.sign(dx) : (b.x <= 0 ? 1 : -1)
+                b.vx += dir * (1 - dist / Rf) * 0.12 * dt
+                b.vx = Math.max(-1.6, Math.min(1.6, b.vx)) // keep it a slow shuffle
+              }
+            }
+            b.vx *= Math.pow(0.97, dt)               // floor friction
+            b.vr = b.vx * (360 / (Math.PI * b.size)) // roll with the movement
+          }
+        }
+
+        b.x += b.vx * dt
+        b.y += b.vy * dt
+        b.rot += b.vr * dt
+        b.vr *= Math.pow(0.99, dt)
+
+        // Bounce off the walls of the play area
+        if (b.x < -maxX) { b.x = -maxX; b.vx = Math.abs(b.vx) * BABY_WALL_BOUNCE; b.vr += b.vy * 0.5 }
+        if (b.x > maxX) { b.x = maxX; b.vx = -Math.abs(b.vx) * BABY_WALL_BOUNCE; b.vr -= b.vy * 0.5 }
+        if (b.y < -maxY) { b.y = -maxY; b.vy = Math.abs(b.vy) * BABY_FLOOR_BOUNCE }
+        if (b.y > maxY) {
+          b.y = maxY
+          b.vy = -Math.abs(b.vy) * BABY_FLOOR_BOUNCE
+          if (Math.abs(b.vy) < BABY_SETTLE_SPEED) b.vy = 0 // dead stop
+          b.vx *= 0.96
+          b.vr += b.vx * 0.8
+        }
+      }
+
+      // ---- Baby-on-baby collisions (circles, equal mass) ----
+      // The held baby acts like an immovable bat; babies floating home pass through.
+      const heldBaby = held?.baby ?? null
+      for (let i = 0; i < babies.length; i++) {
+        const a = babies[i]
+        if (t >= a.homeAt && a !== heldBaby) continue
+        for (let j = i + 1; j < babies.length; j++) {
+          const b = babies[j]
+          if (t >= b.homeAt && b !== heldBaby) continue
+          const dx = b.x - a.x
+          const dy = b.y - a.y
+          const minD = (a.size + b.size) * BABY_COLLIDE_RADIUS
+          const d2 = dx * dx + dy * dy
+          if (d2 >= minD * minD) continue
+          const dist = Math.sqrt(d2) || 0.001
+          const nx = dist > 0.001 ? dx / dist : 1
+          const ny = dist > 0.001 ? dy / dist : 0
+          const overlap = minD - dist
+          const aFixed = a === heldBaby
+          const bFixed = b === heldBaby
+
+          // Separate them
+          if (aFixed) { b.x += nx * overlap; b.y += ny * overlap }
+          else if (bFixed) { a.x -= nx * overlap; a.y -= ny * overlap }
+          else {
+            a.x -= nx * overlap / 2; a.y -= ny * overlap / 2
+            b.x += nx * overlap / 2; b.y += ny * overlap / 2
+          }
+
+          // Bounce: only if they're moving toward each other
+          const rv = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny
+          if (rv >= 0) continue
+          // Gentle contacts don't bounce, so piles settle instead of jittering
+          const e = Math.abs(rv) < 1 ? 0 : BABY_COLLIDE_BOUNCE
+          if (aFixed) {
+            const jb = -(1 + e) * rv
+            b.vx += jb * nx; b.vy += jb * ny
+          } else if (bFixed) {
+            const ja = -(1 + e) * rv
+            a.vx -= ja * nx; a.vy -= ja * ny
+          } else {
+            const jab = -(1 + e) * rv / 2
+            a.vx -= jab * nx; a.vy -= jab * ny
+            b.vx += jab * nx; b.vy += jab * ny
+          }
+          // A little spin from glancing hits
+          const tangential = (b.vx - a.vx) * -ny + (b.vy - a.vy) * nx
+          if (!aFixed) a.vr -= tangential * 0.6
+          if (!bFixed) b.vr += tangential * 0.6
+        }
+      }
+
+      // ---- Keep everyone inside, then draw ----
+      for (const b of babies) {
+        const half = b.size / 2
+        const maxX = zw / 2 - half
+        const maxY = zh / 2 - half
+        b.x = clampV(b.x, maxX)
+        b.y = clampV(b.y, maxY)
+        const lift = b === heldBaby ? ' scale(1.15)' : ''
+        b.node.style.transform = `translate(${(b.x + zw / 2 - half).toFixed(2)}px, ${(b.y + zh / 2 - half).toFixed(2)}px) rotate(${b.rot.toFixed(1)}deg)${lift}`
+      }
+
+      // ---- Dollar signs ----
+      for (let i = coins.length - 1; i >= 0; i--) {
+        const c = coins[i]
+        c.vy += 0.15 * dt
+        c.vx *= Math.pow(0.99, dt)
+        c.x += c.vx * dt
+        c.y += c.vy * dt
+        c.rot += c.vr * dt
+        const age = t - c.born
+        const fade = age > c.life * 0.6 ? Math.max(0, 1 - (age - c.life * 0.6) / (c.life * 0.4)) : 1
+        const pop = age < 120 ? 0.4 + (age / 120) * 0.6 : 1 // quick pop-in
+        c.node.style.transform = `translate(${(c.x + zw / 2).toFixed(1)}px, ${(c.y + zh / 2).toFixed(1)}px) translate(-50%, -50%) rotate(${c.rot.toFixed(1)}deg) scale(${pop.toFixed(2)})`
+        c.node.style.opacity = fade.toFixed(2)
+        if (age > c.life) {
+          c.node.remove()
+          coins.splice(i, 1)
+        }
+      }
+
+      const idle = babies.length === 0 && coins.length === 0 && shakeP >= 1 && Math.abs(scale - 1) < 0.002 && Math.abs(scaleVel) < 0.001
+      if (idle) {
+        el.style.transform = ''
+        running = false
+        lastT = 0
+        return
+      }
+      raf = requestAnimationFrame(frame)
+    }
+
+    const start = () => {
+      if (running) return
+      running = true
+      raf = requestAnimationFrame(frame)
+    }
+
+    const spawnBaby = (src: string, side: number, from: { x: number; y: number }, now: number) => {
+      const base = el.offsetWidth
+      const size = Math.max(14, base * (0.13 + Math.random() * 0.04))
+      const node = document.createElement('img')
+      node.src = src
+      node.alt = ''
+      Object.assign(node.style, {
+        position: 'absolute', left: '0', top: '0', width: `${size}px`, height: `${size}px`,
+        borderRadius: '6px', objectFit: 'cover', willChange: 'transform',
+        boxShadow: '0 2px 8px rgba(0,0,0,0.45)',
+      })
+      layer.appendChild(node)
+      babies.push({
+        node, x: from.x, y: from.y,
+        vx: side * (2 + Math.random() * 3.5), vy: -(4 + Math.random() * 4),
+        rot: Math.random() * 360, vr: side * (6 + Math.random() * 10),
+        size, homeAt: now + homeDelay(),
+      })
+    }
+
+    const onPointerDown = (e: PointerEvent) => {
+      const zr = zone.getBoundingClientRect()
+      const { x: px, y: py } = toLocal(e.clientX, e.clientY, zr)
+      const now = performance.now()
+      pointer = { x: e.clientX, y: e.clientY }
+
+      // 1) A baby? Topmost (newest) first, with a forgiving hit radius.
+      const b = babyAt(px, py)
+      if (b) {
+        e.preventDefault()
+        b.homeAt = now + homeDelay() // stop/postpone merging, timer starts over
+        // Pick it up — floor, mid-air, or on its way home
+        held = { baby: b, offX: b.x - px, offY: b.y - py, pointerId: e.pointerId }
+        samples = [{ x: e.clientX, y: e.clientY, t: now }]
+        try { zone.setPointerCapture(e.pointerId) } catch { /* ignore */ }
+        zone.style.cursor = 'grabbing'
+        // Draw it on top of the others
+        layer.appendChild(b.node)
+        babies.splice(babies.indexOf(b), 1)
+        babies.push(b)
+        start()
+        return
+      }
+
+      // 2) The big logo? Generous hit area, never smaller than a fingertip.
+      const c = logoCenter(zr)
+      const vis = el.offsetWidth * scale
+      if (Math.hypot(px - c.x, py - c.y) > Math.max((vis / 2) * 1.2, 32)) return
+      e.preventDefault()
+
+      // Fully redeemed (smallest size)? Nothing left to give — just a feeble shake.
+      if (pairsOut() >= PAIRS_TO_MIN) {
+        shakeStart = now
+        shakeAmp = 0.35
+        start()
+        return
+      }
+
+      const side = Math.random() < 0.5 ? -1 : 1
+      spawnBaby('/eshare-logo.webp', side, c, now)
+      spawnBaby('/rage-logo.webp', -side, c, now)
+      shakeStart = now
+      shakeAmp = 1
+      scaleVel -= 0.08 // squash on impact
+      start()
+    }
+
+    const onMove = (e: PointerEvent) => {
+      pointer = { x: e.clientX, y: e.clientY }
+      if (held) {
+        const now = performance.now()
+        samples.push({ x: e.clientX, y: e.clientY, t: now })
+        while (samples.length > 2 && now - samples[0].t > 90) samples.shift()
+        return
+      }
+      // Hint that babies can be picked up
+      const zr = zone.getBoundingClientRect()
+      const { x: px, y: py } = toLocal(e.clientX, e.clientY, zr)
+      zone.style.cursor = babyAt(px, py) ? 'grab' : ''
+    }
+
+    const onUp = (e: PointerEvent) => {
+      if (!held || e.pointerId !== held.pointerId) return
+      const b = held.baby
+      // Throw velocity from the last ~90ms of movement, in px per 60fps frame
+      const first = samples[0]
+      const last = samples[samples.length - 1]
+      const span = last && first ? last.t - first.t : 0
+      if (span > 8) {
+        b.vx = clampV(((last.x - first.x) / span) * 16.67, BABY_MAX_THROW)
+        b.vy = clampV(((last.y - first.y) / span) * 16.67, BABY_MAX_THROW)
+      } else {
+        b.vx = 0
+        b.vy = 0
+      }
+      b.vr = b.vx * 2.5
+      b.homeAt = performance.now() + homeDelay()
+      held = null
+      samples = []
+      try { zone.releasePointerCapture(e.pointerId) } catch { /* ignore */ }
+      zone.style.cursor = ''
+      start()
+    }
+
+    const onLeave = () => {
+      if (!held) pointer = null
+    }
+
+    zone.addEventListener('pointerdown', onPointerDown)
+    zone.addEventListener('pointerenter', onMove)
+    zone.addEventListener('pointermove', onMove)
+    zone.addEventListener('pointerup', onUp)
+    zone.addEventListener('pointercancel', onUp)
+    zone.addEventListener('pointerleave', onLeave)
+    return () => {
+      cancelAnimationFrame(raf)
+      zone.removeEventListener('pointerdown', onPointerDown)
+      zone.removeEventListener('pointerenter', onMove)
+      zone.removeEventListener('pointermove', onMove)
+      zone.removeEventListener('pointerup', onUp)
+      zone.removeEventListener('pointercancel', onUp)
+      zone.removeEventListener('pointerleave', onLeave)
+      layer.remove()
+      el.style.transform = ''
+      zone.style.cursor = ''
+      zone.style.touchAction = ''
+    }
+  }, [])
+
+  return (
+    <span className="logo-breathe">
+      <img
+        ref={imgRef}
+        src="/ERAGE-logo.webp"
+        alt="ERAGE"
+        draggable={false}
+        className={`${className} block cursor-pointer select-none`}
+      />
+    </span>
   )
 }
 
@@ -804,7 +1516,6 @@ export default function Dashboard() {
   const {
     priceEfficiencyHistory,
     backingRatioHistory,
-    historyLoaded,
     addPriceEfficiencyPoint,
     addBackingRatioPoint,
   } = useChartHistory()
@@ -1001,41 +1712,83 @@ export default function Dashboard() {
   const { data: rageAllowZap } = useReadContract({ address: CONTRACTS.RAGE, abi: ERC20_ABI, functionName: 'allowance', args: address ? [address, CONTRACTS.GGXZap] : undefined, query: { enabled: !!address, refetchInterval: 10000 } })
   
   // Contract writes
-  const { writeContract, data: txHash, isPending } = useWriteContract()
+  const { writeContract, data: txHash, isPending, error: writeError } = useWriteContract()
   const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({ hash: txHash })
   const queryClient = useQueryClient()
   
   // Loading state for transactions
   const isLoading = isPending || isConfirming
   
+  // Refresh helper: re-fetches live data but skips reads that never change
+  // (pool token addresses, decimals, symbols, fee tiers, contract config).
+  // invalidateQueries() ignores staleTime, so without this every refresh
+  // re-fired dozens of static RPC calls alongside the price reads.
+  const STATIC_FNS = new Set(['token0', 'token1', 'decimals', 'symbol', 'fee', 'uniswapV3Router', 'weth', 'erage', 'usdc', 'quoter', 'adminWallet'])
+  const refreshLiveData = () => queryClient.invalidateQueries({
+    predicate: (q) => {
+      const params = q.queryKey[1] as { functionName?: string } | undefined
+      return !(params?.functionName && STATIC_FNS.has(params.functionName))
+    },
+  })
+
   // Track previous txHash to detect new transactions
   const prevTxHashRef = useRef<string | undefined>(undefined)
+
+  // Transaction feedback: toast + a brief success flash on the action card
+  const pendingLabelRef = useRef<string>(DEFAULT_TX_LABEL)
+  const [toast, setToast] = useState<{ kind: 'success' | 'error'; title: string; detail?: string; hash?: string } | null>(null)
+  const [txFlash, setTxFlash] = useState(false)
+
+  useEffect(() => {
+    if (!toast) return
+    const t = setTimeout(() => setToast(null), toast.kind === 'success' ? 7000 : 6000)
+    return () => clearTimeout(t)
+  }, [toast])
+
+  useEffect(() => {
+    if (!txFlash) return
+    const t = setTimeout(() => setTxFlash(false), 1400)
+    return () => clearTimeout(t)
+  }, [txFlash])
+
+  useEffect(() => {
+    if (!writeError) return
+    const err = writeError as { name?: string; shortMessage?: string; message?: string }
+    const rejected = err.name === 'UserRejectedRequestError' || /user (rejected|denied)/i.test(err.message ?? '')
+    const detail = rejected ? undefined : (err.shortMessage ?? err.message ?? '').slice(0, 160)
+    setToast({ kind: 'error', title: rejected ? 'Transaction cancelled in wallet' : 'Transaction failed', detail })
+    pendingLabelRef.current = DEFAULT_TX_LABEL
+  }, [writeError])
   
   // Refetch all balances after transaction confirms
   useEffect(() => {
     // Only trigger when txHash changes and is confirmed
     if (isConfirmed && txHash && txHash !== prevTxHashRef.current) {
       prevTxHashRef.current = txHash
+      setToast({ kind: 'success', title: pendingLabelRef.current, hash: txHash })
+      setTxFlash(true)
+      pendingLabelRef.current = DEFAULT_TX_LABEL
       // Force refetch all queries immediately + staggered to catch block updates
-      queryClient.invalidateQueries()
-      setTimeout(() => queryClient.invalidateQueries(), 500)
-      setTimeout(() => queryClient.invalidateQueries(), 2000)
-      setTimeout(() => queryClient.invalidateQueries(), 5000)
-      setTimeout(() => queryClient.invalidateQueries(), 8000)
+      refreshLiveData()
+      setTimeout(refreshLiveData, 2000)
+      setTimeout(refreshLiveData, 6000)
     }
   }, [isConfirmed, txHash, queryClient])
   
   // Auto-refresh every 15 seconds for contract data
   useEffect(() => {
     const interval = setInterval(() => {
-      queryClient.invalidateQueries()
+      if (document.visibilityState === 'visible') refreshLiveData()
     }, 30000)
     return () => clearInterval(interval)
   }, [queryClient])
   
   // Manual refresh function - force refetch everything
+  const [refreshSpin, setRefreshSpin] = useState(false)
   const handleRefresh = () => {
-    queryClient.invalidateQueries()
+    refreshLiveData()
+    setRefreshSpin(true)
+    setTimeout(() => setRefreshSpin(false), 900)
   }
   
   // ============ DERIVED VALUES ============
@@ -1048,16 +1801,14 @@ export default function Dashboard() {
 
   // Track backing ratio history for APR calculation
   useEffect(() => {
-    if (!historyLoaded || currentRatio <= 1) return
+    // Live points are recorded right away; useChartHistory merges them with saved history
+    if (currentRatio <= 1) return
     addBackingRatioPoint(currentRatio)
-  }, [currentRatio, historyLoaded, addBackingRatioPoint])
+  }, [currentRatio, addBackingRatioPoint])
 
   // ===== APR Calculation =====
-  // The backing ratio started at 2.0 when the contract was deployed.
-  // All growth calculations must use 2.0 as the baseline, NOT 1.0.
-  // Using 1.0 would massively inflate the APR (e.g. 2.0→2.14 would show 14% growth
-  // instead of the correct ~7% growth from the 2.0 starting point).
-  const INITIAL_BACKING_RATIO = 2.0
+  // Both APRs come only from observed backing-ratio history (saved in Redis + live
+  // points). With no history they show nothing; they never estimate from launch.
 
   // ===== 48H APR — focuses on rolling 48-hour price action =====
   // Tighter than the old 7D window, so it reflects recent protocol activity
@@ -1157,57 +1908,11 @@ export default function Dashboard() {
       return null
     }
     
-    // Fall through to lifetime-based methods ONLY when we have ZERO usable
-    // backing history (fresh page, no prior data, just-deleted DB). These are
-    // stopgap estimates so the UI shows something during the first few minutes
-    // of operation. Once Method 1 has 2+ entries with 1hr+ elapsed time, those
-    // become source of truth.
-
-    // ===== Method 2: ggxPerPair ratchet floor =====
-    // Use estimated elapsed time from first tracked history point
-    if (ggxPerPair) {
-      const floorVal = parseFloat(formatUnits(ggxPerPair, 18))
-      if (floorVal > INITIAL_BACKING_RATIO) {
-        const growthFromFloor = (floorVal - INITIAL_BACKING_RATIO) / INITIAL_BACKING_RATIO
-        // Estimate how long the contract has been active from our history
-        let estimatedDays = 30
-        if (backingRatioHistory.length >= 2) {
-          const elapsedMs = Date.now() - backingRatioHistory[0].time
-          estimatedDays = Math.max(elapsedMs / (24 * 60 * 60 * 1000), 1)
-        }
-        const annualizedRate = (growthFromFloor / estimatedDays) * 365 * 100
-        if (annualizedRate > 0 && annualizedRate <= 99999) {
-          const minutesElapsed = backingRatioHistory.length >= 2
-            ? Math.round((Date.now() - backingRatioHistory[0].time) / (60 * 1000))
-            : -1
-          return { rate: annualizedRate, minutesElapsed }
-        }
-      }
-    }
-
-    // ===== Method 3: Backing ratio on-chain estimate =====
-    if (currentRatio > INITIAL_BACKING_RATIO && (totalMintCount || totalRedeemCount)) {
-      const totalEvents = Number(totalMintCount || 0n) + Number(totalRedeemCount || 0n)
-      if (totalEvents > 0) {
-        const growthFromStart = (currentRatio - INITIAL_BACKING_RATIO) / INITIAL_BACKING_RATIO
-        // Estimate elapsed time from history
-        let estimatedDays = 30
-        if (backingRatioHistory.length >= 2) {
-          const elapsedMs = Date.now() - backingRatioHistory[0].time
-          estimatedDays = Math.max(elapsedMs / (24 * 60 * 60 * 1000), 1)
-        }
-        const annualizedRate = (growthFromStart / estimatedDays) * 365 * 100
-        if (annualizedRate > 0 && annualizedRate <= 99999) {
-          const minutesElapsed = backingRatioHistory.length >= 2
-            ? Math.round((Date.now() - backingRatioHistory[0].time) / (60 * 1000))
-            : -1
-          return { rate: annualizedRate, minutesElapsed }
-        }
-      }
-    }
-
+    // No backing-ratio history at all (still loading, or unavailable). Show nothing
+    // rather than a lifetime estimate — those assumed a 30-day age and showed ~200%
+    // when the real rate was ~5%.
     return null
-  }, [backingRatioHistory, currentRatio, ggxPerPair, totalMintCount, totalRedeemCount])
+  }, [backingRatioHistory, currentRatio])
   
   // ===== 30-Day APR Projection =====
   // Stable, smoothed APR — uses ALL tracked data (not just last 48 hours) and projects
@@ -1256,35 +1961,11 @@ export default function Dashboard() {
       return null
     }
 
-    // Fall through to lifetime-based methods ONLY when we have ZERO usable
-    // backing history (fresh page, no prior data, just-deleted DB).
-
-    // Method 2: ggxPerPair ratchet floor — always 30-day assumption
-    if (ggxPerPair) {
-      const floorVal = parseFloat(formatUnits(ggxPerPair, 18))
-      if (floorVal > INITIAL_BACKING_RATIO) {
-        const growthFromFloor = (floorVal - INITIAL_BACKING_RATIO) / INITIAL_BACKING_RATIO
-        const annualizedRate = (growthFromFloor / 30) * 365 * 100
-        if (annualizedRate > 0 && annualizedRate <= 99999) {
-          return { rate: annualizedRate }
-        }
-      }
-    }
-
-    // Method 3: Backing ratio on-chain estimate — always 30-day assumption
-    if (currentRatio > INITIAL_BACKING_RATIO && (totalMintCount || totalRedeemCount)) {
-      const totalEvents = Number(totalMintCount || 0n) + Number(totalRedeemCount || 0n)
-      if (totalEvents > 0) {
-        const growthFromStart = (currentRatio - INITIAL_BACKING_RATIO) / INITIAL_BACKING_RATIO
-        const annualizedRate = (growthFromStart / 30) * 365 * 100
-        if (annualizedRate > 0 && annualizedRate <= 99999) {
-          return { rate: annualizedRate }
-        }
-      }
-    }
-
+    // No backing-ratio history at all (still loading, or unavailable). Show nothing
+    // rather than a lifetime estimate — those assumed a 30-day age and showed ~200%
+    // when the real rate was ~5%.
     return null
-  }, [backingRatioHistory, currentRatio, ggxPerPair, totalMintCount, totalRedeemCount])
+  }, [backingRatioHistory, currentRatio])
   
   // ACTUAL backing ratio calculated from balances/supply
   // This shows the real backing per GGX based on what's in the contract
@@ -1570,6 +2251,66 @@ export default function Dashboard() {
     return ggxBackingValueUsd / prices.ethPriceUsd
   }, [ggxBackingValueUsd, prices.ethPriceUsd])
 
+  // ============ PROTOCOL TVL (single source for the card + both modals) ============
+  // ERAGE-HESTIA / ERAGE-PLAZM pools — pair auto-detected on-chain. Held back until the
+  // ERAGE price and backing value exist, so the chart's price reads go first.
+  const pricesReady = prices.ggxPrice > 0 && ggxBackingValueUsd > 0
+  const tvlPoolA = usePoolSnapshot(CONTRACTS.TVL_POOL_A, pricesReady)
+  const tvlPoolB = usePoolSnapshot(CONTRACTS.TVL_POOL_B, pricesReady)
+
+  const tokenUsd = useMemo<Record<string, number>>(() => ({
+    [CONTRACTS.WETH.toLowerCase()]: prices.ethPriceUsd,
+    [CONTRACTS.USDC.toLowerCase()]: 1,
+    [CONTRACTS.ESHARE.toLowerCase()]: prices.esharePrice * prices.ethPriceUsd,
+    [CONTRACTS.RAGE.toLowerCase()]: prices.ragePriceInUsdc ? prices.ragePrice : prices.ragePrice * prices.ethPriceUsd,
+    [CONTRACTS.GGX.toLowerCase()]: prices.ggxPriceUsd,
+  }), [prices.ethPriceUsd, prices.esharePrice, prices.ragePrice, prices.ragePriceInUsdc, prices.ggxPriceUsd])
+
+  const tvl = useMemo(() => {
+    const n = (v?: bigint) => (v ? parseFloat(formatUnits(v, 18)) : 0)
+    const ethUsd = tokenUsd[CONTRACTS.WETH.toLowerCase()]
+    const esUsd = tokenUsd[CONTRACTS.ESHARE.toLowerCase()]
+    const raUsd = tokenUsd[CONTRACTS.RAGE.toLowerCase()]
+    const items: TvlItem[] = []
+    const add = (key: string, label: string, color: string, amount: number, symbol: string, usdPrice: number) => {
+      items.push({ key, label, color, amounts: [{ amount, symbol }], usd: usdPrice > 0 ? amount * usdPrice : null })
+    }
+    add('backing-es', 'ESHARE Backing', '#8B5CF6', n(backingBalances?.[0]), 'ES', esUsd)
+    add('backing-ra', 'RAGE Backing', '#EF4444', n(backingBalances?.[1]), 'RA', raUsd)
+    add('erage-eth-1', 'ERAGE-ETH (V3 1%)', '#3B82F6', n(ggxPoolWethBal), 'ETH', ethUsd)
+    add('erage-eth-03', 'ERAGE-ETH (V3 0.3%)', '#3B82F6', n(ggxPool03WethBal), 'ETH', ethUsd)
+    add('erage-rage-side', 'ERAGE-RAGE (side)', '#EF4444', n(ggxRagePoolRageBal), 'RA', raUsd)
+    add('erage-eshare-side', 'ERAGE-ESHARE (side)', '#8B5CF6', n(ggxEsharePoolEshareBal), 'ES', esUsd)
+    add('erage-rage-1', 'ERAGE-RAGE (V3 1%)', '#EF4444', n(erageRagePoolRageBal), 'RA', raUsd)
+    add('erage-eshare-1', 'ERAGE-ESHARE (V3 1%)', '#8B5CF6', n(erageEsharePoolEshareBal), 'ES', esUsd)
+    for (const snap of [tvlPoolA, tvlPoolB]) {
+      const item = poolSnapshotToTvlItem(snap, tokenUsd)
+      if (item) items.push(item)
+    }
+    const total = items.reduce((sum, it) => sum + (it.usd ?? 0), 0)
+    return { items, total }
+  }, [tokenUsd, backingBalances, ggxPoolWethBal, ggxPool03WethBal, ggxRagePoolRageBal, ggxEsharePoolEshareBal, erageRagePoolRageBal, erageEsharePoolEshareBal, tvlPoolA, tvlPoolB])
+
+  // Dollar value of all ERAGE in existence: supply × Uniswap price
+  // (falls back to backing price before the pool price has loaded)
+  const erageSupplyUsd = useMemo(() => {
+    if (!ggxSupply) return 0
+    const px = prices.ggxPriceUsd > 0 ? prices.ggxPriceUsd : ggxBackingValueUsd
+    return parseFloat(formatUnits(ggxSupply, 18)) * px
+  }, [ggxSupply, prices.ggxPriceUsd, ggxBackingValueUsd])
+
+  const renderTvlItems = (gridClass: string) => (
+    <div className={`grid ${gridClass} gap-2 text-[9px]`}>
+      {tvl.items.map((item) => (
+        <div key={item.key} className="rounded p-1.5" style={{ background: `${item.color}1A` }}>
+          <p className="font-semibold" style={{ color: item.color }}>{item.label}</p>
+          <p className="text-white">{item.amounts.map((a) => `${formatAmount(a.amount)} ${a.symbol}`).join(' + ')}</p>
+          <p className="text-gray-400">{item.usd !== null ? `$${formatPrice(item.usd)}` : 'No price feed'}</p>
+        </div>
+      ))}
+    </div>
+  )
+
   // Calculate price efficiency ratio (Uniswap vs Mint)
   // When < 1: Buy on Uniswap (cheaper than mint)
   // When > 1: Mint is better (Uniswap has premium)
@@ -1587,11 +2328,25 @@ export default function Dashboard() {
     return ggxPriceUsd / ggxBackingValueUsd
   }, [prices.ggxPrice, prices.ethPriceUsd, ggxBackingValueUsd])
 
-  // Track price efficiency history for the chart
+  // Track price efficiency history for the chart.
+  // Recorded on every ratio change AND on a 2s heartbeat with the latest value, so the
+  // series keeps ticking even while the price is flat (the ratio only changes when a pool
+  // price refetches, every ~8–20s). useChartHistory throttles the actual spacing:
+  // 2s until the chart has 2 points, then 10s.
+  const latestEfficiencyRef = useRef<number | null>(null)
   useEffect(() => {
-    if (!historyLoaded || priceEfficiencyRatio === null || priceEfficiencyRatio <= 0) return
+    latestEfficiencyRef.current = priceEfficiencyRatio
+    if (priceEfficiencyRatio === null || priceEfficiencyRatio <= 0) return
     addPriceEfficiencyPoint(priceEfficiencyRatio)
-  }, [priceEfficiencyRatio, historyLoaded, addPriceEfficiencyPoint])
+  }, [priceEfficiencyRatio, addPriceEfficiencyPoint])
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      const r = latestEfficiencyRef.current
+      if (r !== null && r > 0) addPriceEfficiencyPoint(r)
+    }, 2000)
+    return () => clearInterval(id)
+  }, [addPriceEfficiencyPoint])
   
   // Estimated GGX output for ETH zap
   // Computed from the actual backing value (cost to mint 1 GGX in ETH terms)
@@ -1695,11 +2450,13 @@ export default function Dashboard() {
   // ============ HANDLERS ============
   const handleApprove = (token: `0x${string}`, spender: `0x${string}`, amount: string) => {
     if (!amount) return
+    pendingLabelRef.current = token === CONTRACTS.ESHARE ? 'ESHARE approved' : token === CONTRACTS.RAGE ? 'RAGE approved' : 'Approval confirmed'
     writeContract({ address: token, abi: ERC20_ABI, functionName: 'approve', args: [spender, parseUnits(amount, 18)] })
   }
   
   // Main action handler - determines action based on inputToken
   const handleAction = () => {
+    pendingLabelRef.current = inputToken === 'GGX' ? 'ERAGE redeemed' : 'ERAGE minted'
     if (inputToken === 'GGX') {
       // Redeem GGX — no slippage param needed; redeem ratio can only move in user's favor
       if (!inputAmount) return
@@ -1860,9 +2617,11 @@ export default function Dashboard() {
   if (!mounted) {
     return (
       <div className="min-h-screen bg-[#0A0A0B] flex items-center justify-center">
-        <div className="animate-pulse flex flex-col items-center gap-4">
-          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-[#FF6B35] to-[#E55A2B]" />
-          <div className="h-4 w-32 bg-white/10 rounded" />
+        <div className="flex flex-col items-center gap-4">
+          <img src="/ERAGE-logo.webp" alt="" className="w-16 h-16 rounded-2xl object-cover animate-pulse-glow" />
+          <div className="h-1 w-32 rounded-full bg-white/10 overflow-hidden">
+            <div className="h-full w-1/3 rounded-full bg-[#FF6B35] loading-bar" />
+          </div>
         </div>
       </div>
     )
@@ -1874,6 +2633,7 @@ export default function Dashboard() {
       <div className="fixed inset-0 pointer-events-none">
         <img src="/ERAGE-background.webp" alt="" className="w-full h-full object-cover" />
         <div className="absolute inset-0 bg-[#0A0A0B]/85" />
+        <div className="bg-aurora" />
       </div>
       <div className="noise-overlay" />
       
@@ -1882,7 +2642,7 @@ export default function Dashboard() {
         <header className="px-3 sm:px-4 py-1" style={{ background: 'transparent' }}>
           <div className="max-w-7xl mx-auto flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-              <img src="/ERAGE-logo.webp" className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl object-cover shadow-lg shadow-[#FF6B35]/20 shrink-0" alt="GGX" />
+              <img src="/ERAGE-logo.webp" className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl object-cover shrink-0 animate-pulse-glow" alt="ERAGE" />
               <div className="min-w-0">
                 <h1 className="text-sm sm:text-lg font-bold tracking-tight truncate">ERAGE Protocol</h1>
               </div>
@@ -1902,6 +2662,8 @@ export default function Dashboard() {
                   </div>
                   <button 
                     onClick={() => setShowAdmin(!showAdmin)}
+                    aria-label={isAdmin ? 'Admin console' : 'Protocol info'}
+                    title={isAdmin ? 'Admin console' : 'Protocol info'}
                     className={`p-1.5 sm:p-2 rounded-xl border transition-all ${showAdmin ? 'bg-[#F59E0B]/20 border-[#F59E0B]/30 text-[#F59E0B]' : 'bg-white/5 border-white/10 text-gray-400 hover:text-white'}`}
                   >
                     <Settings size={14} className="sm:hidden" /><Settings size={18} className="hidden sm:block" />
@@ -1910,10 +2672,13 @@ export default function Dashboard() {
                     onClick={handleRefresh}
                     className="p-1.5 sm:p-2 bg-white/5 hover:bg-white/10 rounded-xl border border-white/10 transition-all"
                     title="Refresh data"
+                    aria-label="Refresh data"
                   >
-                    <RefreshCw size={14} className="sm:hidden" /><RefreshCw size={16} className="hidden sm:block" />
+                    <RefreshCw size={14} className={`sm:hidden ${refreshSpin ? 'animate-spin' : ''}`} /><RefreshCw size={16} className={`hidden sm:block ${refreshSpin ? 'animate-spin' : ''}`} />
                   </button>
-                  <button onClick={() => disconnect()} className="px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm bg-white/5 hover:bg-white/10 rounded-xl border border-white/10 transition-all">Disc.</button>
+                  <button onClick={() => disconnect()} title="Disconnect" aria-label="Disconnect wallet" className="p-1.5 sm:p-2 bg-white/5 hover:bg-[#EF4444]/15 hover:text-[#EF4444] hover:border-[#EF4444]/30 rounded-xl border border-white/10 transition-all">
+                    <LogOut size={14} className="sm:hidden" /><LogOut size={16} className="hidden sm:block" />
+                  </button>
                 </>
               ) : (
                 <button onClick={() => connect({ connector: connectors[0] })} disabled={isConnecting} className="px-3 sm:px-5 py-2 sm:py-2.5 text-xs sm:text-sm btn-primary rounded-xl font-medium disabled:opacity-50 flex items-center gap-2">
@@ -1937,8 +2702,8 @@ export default function Dashboard() {
                     <div className="stat-card rounded-xl bg-gradient-to-br from-[#FF6B35]/15 to-[#1a1a1c]/90 border border-white/6 p-2 flex flex-col transition-all duration-300 hover:brightness-110 hover:border-white/12">
                       <div>
                         <p className="text-[10px] text-gray-400 uppercase tracking-wider">Backing Ratio</p>
-                        <p className="text-lg sm:text-xl font-bold font-mono gradient-text">
-                          {formatRatio(backingRatio?.[0] && backingRatio?.[1] ? (backingRatio[0] + backingRatio[1]) : undefined)}
+                        <p className="text-lg sm:text-xl font-bold font-mono text-[#FF9A5C] ratio-glow">
+                          <RatchetNumber value={formatRatio(backingRatio?.[0] && backingRatio?.[1] ? (backingRatio[0] + backingRatio[1]) : undefined)} />
                         </p>
                         <p className="text-[10px] text-gray-500 flex items-center gap-1">
                           <img src="/eshare-logo.webp" className="w-4 h-4 rounded object-cover" alt="ES" /> <span className="text-sm font-bold text-gray-300 mx-0.5">+</span> <img src="/rage-logo.webp" className="w-4 h-4 rounded object-cover" alt="RA" /> per ERAGE
@@ -1975,7 +2740,14 @@ export default function Dashboard() {
                         <p className="text-[10px] text-gray-400 uppercase tracking-wider">ERAGE Supply</p>
                         {isPaused && <span className="text-[9px] text-[#EF4444] font-semibold">PAUSED</span>}
                       </div>
-                      <p className="text-lg sm:text-xl font-bold font-mono">{formatNum(ggxSupply)}</p>
+                      <div className="flex flex-wrap items-baseline justify-between gap-x-2">
+                        <p className="text-lg sm:text-xl font-bold font-mono">{formatNum(ggxSupply)}</p>
+                        {erageSupplyUsd > 0 && (
+                          <p className="text-sm font-semibold font-mono text-[#10B981]" title="ERAGE supply × ERAGE price">
+                            <RatchetNumber value={formatUsdCompact(erageSupplyUsd)} />
+                          </p>
+                        )}
+                      </div>
                       {ggxBackingValueUsd > 0 && (
                         <div className="mt-1 pt-1 border-t border-white/10">
                           <p className="text-xs text-gray-400">Backing Price</p>
@@ -2041,11 +2813,11 @@ export default function Dashboard() {
                           <div className="flex flex-col gap-0.5 text-[13px]">
                             <div className="flex items-center gap-1">
                               <img src="/eshare-logo.webp" className="w-4 h-4 rounded object-cover shrink-0" alt="ESHARE" />
-                              <div className="flex gap-1 w-full"><span className="text-[#8B5CF6] font-semibold w-[50px]">ESHARE</span><span className="text-[#8B5CF6] font-semibold ml-auto">{burntAmounts.eshare > 0n ? formatNum(burntAmounts.eshare) : '—'}</span></div>
+                              <div className="flex gap-1 w-full"><span className="text-[#8B5CF6] font-semibold w-[50px]">ESHARE</span><span className="text-[#8B5CF6] font-semibold ml-auto">{burntAmounts.eshare > 0n ? <RatchetNumber value={formatNum(burntAmounts.eshare)} /> : '—'}</span></div>
                             </div>
                             <div className="flex items-center gap-1">
                               <img src="/rage-logo.webp" className="w-4 h-4 rounded object-cover shrink-0" alt="RAGE" />
-                              <div className="flex gap-1 w-full"><span className="text-[#DC2626] font-semibold w-[50px]">RAGE</span><span className="text-[#DC2626] font-semibold ml-auto">{burntAmounts.rage > 0n ? formatNum(burntAmounts.rage) : '—'}</span></div>
+                              <div className="flex gap-1 w-full"><span className="text-[#DC2626] font-semibold w-[50px]">RAGE</span><span className="text-[#DC2626] font-semibold ml-auto">{burntAmounts.rage > 0n ? <RatchetNumber value={formatNum(burntAmounts.rage)} /> : '—'}</span></div>
                             </div>
                           </div>
                         </div>
@@ -2053,17 +2825,9 @@ export default function Dashboard() {
                         {/* Protocol TVL at bottom - single line */}
                         {backingBalances && prices.ethPriceUsd > 0 && (
                           <div className="mt-auto pt-1 border-t border-white/10">
-                            <p className="text-sm font-semibold text-[#FFD700] text-center whitespace-nowrap">
-                              Protocol TVL = ${Math.ceil(
-                                parseFloat(formatUnits(backingBalances[0], 18)) * prices.esharePrice * prices.ethPriceUsd +
-                                parseFloat(formatUnits(backingBalances[1], 18)) * prices.ragePrice +
-                                (ggxPoolWethBal ? parseFloat(formatUnits(ggxPoolWethBal, 18)) : 0) * prices.ethPriceUsd +
-                                (ggxPool03WethBal ? parseFloat(formatUnits(ggxPool03WethBal, 18)) : 0) * prices.ethPriceUsd +
-                                (ggxRagePoolRageBal ? parseFloat(formatUnits(ggxRagePoolRageBal, 18)) : 0) * prices.ragePrice +
-                                (ggxEsharePoolEshareBal ? parseFloat(formatUnits(ggxEsharePoolEshareBal, 18)) : 0) * prices.esharePrice * prices.ethPriceUsd +
-                                (erageRagePoolRageBal ? parseFloat(formatUnits(erageRagePoolRageBal, 18)) : 0) * prices.ragePrice +
-                                (erageEsharePoolEshareBal ? parseFloat(formatUnits(erageEsharePoolEshareBal, 18)) : 0) * prices.esharePrice * prices.ethPriceUsd
-                              ).toLocaleString()}
+                            <p className="text-sm font-semibold text-[#FFD700] text-center whitespace-nowrap flex items-center justify-center gap-1">
+                              <span>Protocol TVL</span>
+                              <RatchetNumber className="font-mono" value={`$${Math.ceil(tvl.total).toLocaleString('en-US')}`} />
                             </p>
                           </div>
                         )}
@@ -2085,7 +2849,7 @@ export default function Dashboard() {
                       </div>
                       {/* Time Range Buttons */}
                       <div className="flex gap-1">
-                        {(['4h', '1d', '1w', '2w'] as TimeRange[]).map((range) => (
+                        {(['4h', '1d', '1w'] as TimeRange[]).map((range) => (
                           <button
                             key={range}
                             onClick={() => setTimeRange(range)}
@@ -2117,49 +2881,54 @@ export default function Dashboard() {
 
                 {/* Right Column - Unified Action Box */}
                 <div className="col-span-12 lg:col-span-7 flex flex-col gap-2 lg:min-h-0 lg:overflow-y-auto">
-                  <div className="lg:flex-1 card rounded-xl p-2 flex flex-col lg:min-h-0">
+                  <div className={`lg:flex-1 card rounded-xl p-2 flex flex-col lg:min-h-0 relative ${isLoading ? 'tx-live' : ''} ${txFlash ? 'tx-done' : ''}`}>
                     <div className="shrink-0 space-y-1">
-                      <div className="flex gap-2">
-                        <div className="flex-1 flex flex-col items-center gap-0.5">
-                          <p className="text-[13px] text-[#10B981] font-semibold">Mint</p>
-                          <button 
-                            onClick={() => { setInputToken('ETH'); setInputAmount(''); setEshareInput(''); setRageInput(''); }}
-                            className={`w-full py-2 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1 ${
-                              inputToken === 'ETH' 
-                                ? 'bg-[#FF6B35] text-white' 
-                                : 'bg-white/5 text-gray-400 hover:text-white border border-white/10'
-                            }`}
-                          >
-                            <Zap size={12} /> ETH
-                          </button>
-                        </div>
-                        <div className="flex-1 flex flex-col items-center gap-0.5">
-                          <p className="text-[13px] text-[#10B981] font-semibold">Mint</p>
-                          <button 
-                            onClick={() => { setInputToken('ESHARE_RAGE'); setInputAmount(''); setEshareInput(''); setRageInput(''); }}
-                            className={`w-full py-2 rounded-lg text-xs font-medium transition-all ${
-                              inputToken === 'ESHARE_RAGE' 
-                                ? 'bg-[#8B5CF6] text-white' 
-                                : 'bg-white/5 text-gray-400 hover:text-white border border-white/10'
-                            }`}
-                          >
-                            ESHARE + RAGE
-                          </button>
-                        </div>
-                        <div className="flex-1 flex flex-col items-center gap-0.5">
-                          <p className="text-[13px] text-[#A855F7] font-semibold">Redeem</p>
-                          <button 
-                            onClick={() => { setInputToken('GGX'); setInputAmount(''); setEshareInput(''); setRageInput(''); }}
-                            className={`w-full py-2 rounded-lg text-xs font-medium transition-all ${
-                              inputToken === 'GGX' 
-                                ? 'bg-[#3B82F6] text-white' 
-                                : 'bg-white/5 text-gray-400 hover:text-white border border-white/10'
-                            }`}
-                          >
-                            ERAGE
-                          </button>
-                        </div>
-                      </div>
+                      {(() => {
+                        const modes = [
+                          { id: 'ETH' as const, group: 'Mint', groupColor: '#10B981', label: 'ETH', color: '#FF6B35' },
+                          { id: 'ESHARE_RAGE' as const, group: 'Mint', groupColor: '#10B981', label: 'ESHARE + RAGE', color: '#8B5CF6' },
+                          { id: 'GGX' as const, group: 'Redeem', groupColor: '#A855F7', label: 'ERAGE', color: '#3B82F6' },
+                        ]
+                        const activeIdx = Math.max(0, modes.findIndex((m) => m.id === inputToken))
+                        const active = modes[activeIdx]
+                        return (
+                          <div>
+                            <div className="grid grid-cols-3 gap-2 mb-0.5">
+                              {modes.map((m) => (
+                                <p key={m.id} className="text-[13px] font-semibold text-center" style={{ color: m.groupColor }}>{m.group}</p>
+                              ))}
+                            </div>
+                            <div role="tablist" aria-label="Mint or redeem" className="relative grid grid-cols-3 gap-2">
+                              <span
+                                aria-hidden="true"
+                                className="mode-indicator"
+                                style={{
+                                  width: 'calc((100% - 1rem) / 3)',
+                                  transform: `translateX(calc(${activeIdx} * (100% + 0.5rem)))`,
+                                  background: active.color,
+                                  boxShadow: `0 4px 18px ${active.color}55`,
+                                }}
+                              />
+                              {modes.map((m) => {
+                                const isActive = inputToken === m.id
+                                return (
+                                  <button
+                                    key={m.id}
+                                    role="tab"
+                                    aria-selected={isActive}
+                                    onClick={() => { setInputToken(m.id); setInputAmount(''); setEshareInput(''); setRageInput(''); }}
+                                    className={`relative z-10 w-full py-2 rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1 ${
+                                      isActive ? 'text-white border border-transparent' : 'bg-white/5 text-gray-400 hover:text-white border border-white/10'
+                                    }`}
+                                  >
+                                    {m.id === 'ETH' && <Zap size={12} />} {m.label}
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        )
+                      })()}
 
                       {/* Separator line under tabs */}
                       <div className="mt-0.5 border-t border-white/10"></div>
@@ -2551,8 +3320,11 @@ export default function Dashboard() {
                         <div className="flex-1 min-w-0 min-h-0">
                           <UniswapWidget ggxAddress={CONTRACTS.GGX} />
                         </div>
-                        <div className="hidden sm:flex shrink-0 items-center justify-center">
-                          <img src="/ERAGE-logo.webp" className="w-16 h-16 sm:w-20 sm:h-20 lg:w-48 lg:h-48 object-contain opacity-60" alt="ERAGE" />
+                        {/* Logo play area. Fixed width (a bit wider than before, so the swap widget
+                            gives up a little room); overflow-hidden keeps the logo and its babies
+                            inside, which also stops the card's bottom edge from shifting */}
+                        <div className="relative hidden sm:flex shrink-0 self-stretch items-start justify-center overflow-hidden sm:w-36 lg:w-[300px] pt-6 lg:pt-12">
+                          <BouncingLogo className="w-16 h-16 sm:w-20 sm:h-20 lg:w-48 lg:h-48 object-contain opacity-90 will-change-transform" />
                         </div>
                       </div>
                       {/* Links row — always visible, never clipped */}
@@ -2621,37 +3393,10 @@ export default function Dashboard() {
                     {/* TVL Breakdown */}
                     <div className="bg-white/5 rounded-lg p-2 space-y-1">
                       <p className="text-[10px] text-gray-400 uppercase">TVL Breakdown</p>
-                      <div className="grid grid-cols-1 gap-2 text-[9px]">
-                        <div className="bg-[#8B5CF6]/10 rounded p-1.5">
-                          <p className="text-[#8B5CF6] font-semibold">ESHARE Backing</p>
-                          <p className="text-white">{backingBalances ? formatNum(backingBalances[0]) : '—'} ES</p>
-                          <p className="text-gray-400">{backingBalances && prices.esharePrice > 0 ? `$${formatPrice(parseFloat(formatUnits(backingBalances[0], 18)) * prices.esharePrice * prices.ethPriceUsd)}` : '—'}</p>
-                        </div>
-                        <div className="bg-[#EF4444]/10 rounded p-1.5">
-                          <p className="text-[#EF4444] font-semibold">RAGE Backing</p>
-                          <p className="text-white">{backingBalances ? formatNum(backingBalances[1]) : '—'} RA</p>
-                          <p className="text-gray-400">{backingBalances && prices.ragePrice > 0 ? `$${formatPrice(parseFloat(formatUnits(backingBalances[1], 18)) * prices.ragePrice)}` : '—'}</p>
-                        </div>
-                        <div className="bg-[#3B82F6]/10 rounded p-1.5">
-                          <p className="text-[#3B82F6] font-semibold">ERAGE-ETH Pool (V3 1%)</p>
-                          <p className="text-white">{ggxPoolWethBal ? formatNum(ggxPoolWethBal, 18) : '—'} ETH</p>
-                          <p className="text-gray-400">{ggxPoolWethBal && prices.ethPriceUsd > 0 ? `$${formatPrice(parseFloat(formatUnits(ggxPoolWethBal, 18)) * prices.ethPriceUsd)}` : '—'}</p>
-                        </div>
-                        <div className="bg-[#3B82F6]/10 rounded p-1.5">
-                          <p className="text-[#3B82F6] font-semibold">ERAGE-ETH Pool (V3 0.3%)</p>
-                          <p className="text-white">{ggxPool03WethBal ? formatNum(ggxPool03WethBal, 18) : '—'} ETH</p>
-                          <p className="text-gray-400">{ggxPool03WethBal && prices.ethPriceUsd > 0 ? `$${formatPrice(parseFloat(formatUnits(ggxPool03WethBal, 18)) * prices.ethPriceUsd)}` : '—'}</p>
-                        </div>
-                        <div className="bg-[#EF4444]/10 rounded p-1.5">
-                          <p className="text-[#EF4444] font-semibold">ERAGE-RAGE Pool</p>
-                          <p className="text-white">{erageRagePoolRageBal ? formatNum(erageRagePoolRageBal, 18) : '—'} RA</p>
-                          <p className="text-gray-400">{erageRagePoolRageBal && prices.ragePrice > 0 ? `$${formatPrice(parseFloat(formatUnits(erageRagePoolRageBal, 18)) * prices.ragePrice)}` : '—'}</p>
-                        </div>
-                        <div className="bg-[#8B5CF6]/10 rounded p-1.5">
-                          <p className="text-[#8B5CF6] font-semibold">ERAGE-ESHARE Pool</p>
-                          <p className="text-white">{erageEsharePoolEshareBal ? formatNum(erageEsharePoolEshareBal, 18) : '—'} ES</p>
-                          <p className="text-gray-400">{erageEsharePoolEshareBal && prices.esharePrice > 0 ? `$${formatPrice(parseFloat(formatUnits(erageEsharePoolEshareBal, 18)) * prices.esharePrice * prices.ethPriceUsd)}` : '—'}</p>
-                        </div>
+                      {renderTvlItems('grid-cols-2')}
+                      <div className="mt-1 pt-1 border-t border-white/10 flex justify-between items-center">
+                        <span className="text-[10px] text-gray-400">Total TVL:</span>
+                        <span className="text-sm font-bold text-[#FFD700]">{tvl.total > 0 ? `$${formatPrice(tvl.total)}` : '—'}</span>
                       </div>
                     </div>
                   </div>
@@ -2773,63 +3518,11 @@ export default function Dashboard() {
                         
                         <div className="col-span-2 lg:col-span-4 bg-white/5 rounded-lg p-2 space-y-1">
                           <p className="text-[10px] text-gray-400 uppercase">TVL Breakdown</p>
-                          <div className="grid grid-cols-3 lg:grid-cols-4 gap-2 text-[9px]">
-                            <div className="bg-[#8B5CF6]/10 rounded p-1.5">
-                              <p className="text-[#8B5CF6] font-semibold">ESHARE Backing</p>
-                              <p className="text-white">{backingBalances ? formatNum(backingBalances[0]) : '—'} ES</p>
-                              <p className="text-gray-400">{backingBalances && prices.esharePrice > 0 ? `$${formatPrice(parseFloat(formatUnits(backingBalances[0], 18)) * prices.esharePrice * prices.ethPriceUsd)}` : '—'}</p>
-                            </div>
-                            <div className="bg-[#EF4444]/10 rounded p-1.5">
-                              <p className="text-[#EF4444] font-semibold">RAGE Backing</p>
-                              <p className="text-white">{backingBalances ? formatNum(backingBalances[1]) : '—'} RA</p>
-                              <p className="text-gray-400">{backingBalances && prices.ragePrice > 0 ? `$${formatPrice(parseFloat(formatUnits(backingBalances[1], 18)) * prices.ragePrice)}` : '—'}</p>
-                            </div>
-                            <div className="bg-[#3B82F6]/10 rounded p-1.5">
-                              <p className="text-[#3B82F6] font-semibold">ERAGE-ETH Pool (V3 1%)</p>
-                              <p className="text-white">{ggxPoolWethBal ? formatNum(ggxPoolWethBal, 18) : '—'} ETH</p>
-                              <p className="text-gray-400">{ggxPoolWethBal && prices.ethPriceUsd > 0 ? `$${formatPrice(parseFloat(formatUnits(ggxPoolWethBal, 18)) * prices.ethPriceUsd)}` : '—'}</p>
-                            </div>
-                            <div className="bg-[#3B82F6]/10 rounded p-1.5">
-                              <p className="text-[#3B82F6] font-semibold">ERAGE-ETH Pool (V3 0.3%)</p>
-                              <p className="text-white">{ggxPool03WethBal ? formatNum(ggxPool03WethBal, 18) : '—'} ETH</p>
-                              <p className="text-gray-400">{ggxPool03WethBal && prices.ethPriceUsd > 0 ? `$${formatPrice(parseFloat(formatUnits(ggxPool03WethBal, 18)) * prices.ethPriceUsd)}` : '—'}</p>
-                            </div>
-                            <div className="bg-[#EF4444]/10 rounded p-1.5">
-                              <p className="text-[#EF4444] font-semibold">ERAGE-RAGE Pool</p>
-                              <p className="text-white">{ggxRagePoolRageBal ? formatNum(ggxRagePoolRageBal, 18) : '—'} RA</p>
-                              <p className="text-gray-400">{ggxRagePoolRageBal && prices.ragePrice > 0 ? `$${formatPrice(parseFloat(formatUnits(ggxRagePoolRageBal, 18)) * prices.ragePrice)}` : '—'}</p>
-                            </div>
-                            <div className="bg-[#8B5CF6]/10 rounded p-1.5">
-                              <p className="text-[#8B5CF6] font-semibold">ERAGE-ESHARE Pool</p>
-                              <p className="text-white">{ggxEsharePoolEshareBal ? formatNum(ggxEsharePoolEshareBal, 18) : '—'} ES</p>
-                              <p className="text-gray-400">{ggxEsharePoolEshareBal && prices.esharePrice > 0 ? `$${formatPrice(parseFloat(formatUnits(ggxEsharePoolEshareBal, 18)) * prices.esharePrice * prices.ethPriceUsd)}` : '—'}</p>
-                            </div>
-                            <div className="bg-[#EF4444]/10 rounded p-1.5">
-                              <p className="text-[#EF4444] font-semibold">ERAGE-RAGE Pool (V3 1%)</p>
-                              <p className="text-white">{erageRagePoolRageBal ? formatNum(erageRagePoolRageBal, 18) : '—'} RA</p>
-                              <p className="text-gray-400">{erageRagePoolRageBal && prices.ragePrice > 0 ? `$${formatPrice(parseFloat(formatUnits(erageRagePoolRageBal, 18)) * prices.ragePrice)}` : '—'}</p>
-                            </div>
-                            <div className="bg-[#8B5CF6]/10 rounded p-1.5">
-                              <p className="text-[#8B5CF6] font-semibold">ERAGE-ESHARE Pool (V3 1%)</p>
-                              <p className="text-white">{erageEsharePoolEshareBal ? formatNum(erageEsharePoolEshareBal, 18) : '—'} ES</p>
-                              <p className="text-gray-400">{erageEsharePoolEshareBal && prices.esharePrice > 0 ? `$${formatPrice(parseFloat(formatUnits(erageEsharePoolEshareBal, 18)) * prices.esharePrice * prices.ethPriceUsd)}` : '—'}</p>
-                            </div>
-                          </div>
+                          {renderTvlItems('grid-cols-3 lg:grid-cols-4')}
                           <div className="mt-1 pt-1 border-t border-white/10 flex justify-between items-center">
                             <span className="text-[10px] text-gray-400">Total TVL:</span>
                             <span className="text-sm font-bold text-[#FFD700]">
-                              ${backingBalances && prices.ethPriceUsd > 0 
-                                ? formatPrice((
-                                    parseFloat(formatUnits(backingBalances[0], 18)) * prices.esharePrice * prices.ethPriceUsd +
-                                    parseFloat(formatUnits(backingBalances[1], 18)) * prices.ragePrice +
-                                    (ggxPoolWethBal ? parseFloat(formatUnits(ggxPoolWethBal, 18)) : 0) * prices.ethPriceUsd +
-                                    (ggxPool03WethBal ? parseFloat(formatUnits(ggxPool03WethBal, 18)) : 0) * prices.ethPriceUsd +
-                                    (ggxRagePoolRageBal ? parseFloat(formatUnits(ggxRagePoolRageBal, 18)) : 0) * prices.ragePrice +
-                                    (ggxEsharePoolEshareBal ? parseFloat(formatUnits(ggxEsharePoolEshareBal, 18)) : 0) * prices.esharePrice * prices.ethPriceUsd +
-                                    (erageRagePoolRageBal ? parseFloat(formatUnits(erageRagePoolRageBal, 18)) : 0) * prices.ragePrice +
-                                    (erageEsharePoolEshareBal ? parseFloat(formatUnits(erageEsharePoolEshareBal, 18)) : 0) * prices.esharePrice * prices.ethPriceUsd
-                                  ))
-                                : '—'}
+                              {backingBalances && prices.ethPriceUsd > 0 ? `$${formatPrice(tvl.total)}` : '—'}
                             </span>
                           </div>
                         </div>
@@ -3019,6 +3712,42 @@ export default function Dashboard() {
             </div>
         </main>
       </div>
+
+      {/* Transaction toast */}
+      {toast && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="toast-in fixed bottom-4 right-4 left-4 sm:left-auto z-[60] sm:max-w-sm rounded-xl border px-3 py-2.5 flex items-start gap-2.5 shadow-2xl"
+          style={{
+            background: 'rgba(15, 15, 16, 0.94)',
+            backdropFilter: 'blur(12px)',
+            WebkitBackdropFilter: 'blur(12px)',
+            borderColor: toast.kind === 'success' ? 'rgba(16, 185, 129, 0.35)' : 'rgba(239, 68, 68, 0.35)',
+          }}
+        >
+          <span className={`mt-0.5 shrink-0 rounded-full p-1 ${toast.kind === 'success' ? 'bg-[#10B981]/15 text-[#10B981]' : 'bg-[#EF4444]/15 text-[#EF4444]'}`}>
+            {toast.kind === 'success' ? <Check size={12} /> : <AlertTriangle size={12} />}
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold">{toast.title}</p>
+            {toast.detail && <p className="text-[11px] text-gray-400 mt-0.5 break-words">{toast.detail}</p>}
+            {toast.hash && (
+              <a
+                href={`https://basescan.org/tx/${toast.hash}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[11px] text-[#10B981] hover:text-[#34D399] inline-flex items-center gap-0.5 mt-0.5"
+              >
+                View on Basescan <ArrowUpRight size={10} />
+              </a>
+            )}
+          </div>
+          <button onClick={() => setToast(null)} aria-label="Dismiss" className="text-gray-500 hover:text-white p-0.5 rounded">
+            <X size={14} />
+          </button>
+        </div>
+      )}
     </div>
   )
 }
