@@ -526,6 +526,77 @@
   }
 }
 
+/* ============ HYPERDRIVER CTA ============ */
+
+/* Orange pill with a moving orange→purple edge and a soft pulse, so it reads as
+   "click me" without shouting. Matches the HyperDriver ERAGE theme
+   (orange with purple lightning). */
+@property --hd-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.hd-cta {
+  position: relative;
+  border-radius: 9999px;
+  padding: 1.5px;
+  background: conic-gradient(from var(--hd-angle), #FF6B35, #A855F7, #FFD700, #FF6B35);
+  animation: hd-spin 4s linear infinite, hd-pulse 2.4s ease-in-out infinite;
+  text-decoration: none;
+  color: #fff;
+  transition: transform 0.2s ease;
+}
+
+.hd-cta:hover {
+  transform: translateY(-1px) scale(1.02);
+}
+
+.hd-cta-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  width: 100%;
+  border-radius: 9999px;
+  padding: 0.4rem 0.9rem;
+  font-size: 0.8rem;
+  background: linear-gradient(135deg, rgba(255, 107, 53, 0.28), rgba(20, 12, 28, 0.94) 55%, rgba(168, 85, 247, 0.28));
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.hd-bolt {
+  color: #C084FC;
+  filter: drop-shadow(0 0 6px rgba(168, 85, 247, 0.9));
+  animation: hd-zap 2.4s ease-in-out infinite;
+}
+
+.hd-stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  padding-left: 0.6rem;
+  margin-left: 0.15rem;
+  border-left: 1px solid rgba(255, 255, 255, 0.18);
+  color: #FFD700;
+}
+
+@keyframes hd-spin {
+  to { --hd-angle: 360deg; }
+}
+
+@keyframes hd-pulse {
+  0%, 100% { box-shadow: 0 0 10px rgba(255, 107, 53, 0.25), 0 0 0 0 rgba(168, 85, 247, 0); }
+  50%      { box-shadow: 0 0 22px rgba(255, 107, 53, 0.45), 0 0 26px rgba(168, 85, 247, 0.35); }
+}
+
+@keyframes hd-zap {
+  0%, 82%, 100% { opacity: 1; transform: scale(1); }
+  86% { opacity: 0.4; transform: scale(0.9); }
+  90% { opacity: 1; transform: scale(1.25); }
+}
+
 /* ============ FOCUS ============ */
 
 button:focus-visible,
@@ -544,7 +615,9 @@ a:focus-visible {
   .gradient-text-animated,
   .tx-live::after,
   .ratchet-rising::after,
-  .logo-breathe {
+  .logo-breathe,
+  .hd-cta,
+  .hd-bolt {
     animation: none !important;
   }
   .ratchet-strip,

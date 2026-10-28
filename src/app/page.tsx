@@ -62,6 +62,8 @@ const CONTRACTS = {
   // PLAZM side is counted in TVL, priced off ERAGE via the pool's own spot price.
   TVL_POOL_A: '0x6c9f4c88192a8960ffa6457c8e47894ce1a7869a' as `0x${string}`,
   TVL_POOL_B: '0x0d95223e11b42f206230050ff8a12ff2eecde821' as `0x${string}`,
+  // HyperDriver ERAGE staking pool — ERAGE held here = ERAGE staked
+  HYPERDRIVER_ERAGE_POOL: '0xcdAA6E0678a5d972C0E33f446D4A8C02b3e14505' as `0x${string}`,
 }
 
 // V3 Fee tiers (in basis points)
@@ -1473,6 +1475,33 @@ function BouncingLogo({ className }: { className: string }) {
   )
 }
 
+// ============ HYPERDRIVER CTA ============
+const HYPERDRIVER_ERAGE_URL = 'https://www.hyperdriver.app/?pool=erage'
+
+function HyperDriverCTA({ pct, className = '' }: { pct: number | null; className?: string }) {
+  return (
+    <a
+      href={HYPERDRIVER_ERAGE_URL}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={`hd-cta group ${className}`}
+      title="Stake ERAGE in the HyperDriver pool"
+    >
+      <span className="hd-cta-inner">
+        <Zap size={15} className="hd-bolt shrink-0" />
+        <span className="font-bold tracking-tight whitespace-nowrap">Stake ERAGE on HyperDriver</span>
+        <ArrowUpRight size={14} className="shrink-0 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+        {pct !== null && (
+          <span className="hd-stat">
+            <RatchetNumber className="font-mono font-bold" value={`${pct.toFixed(1)}%`} />
+            <span className="text-[10px] text-gray-300 font-medium whitespace-nowrap">of supply staked</span>
+          </span>
+        )}
+      </span>
+    </a>
+  )
+}
+
 // ============ MAIN COMPONENT ============
 export default function Dashboard() {
   const [mounted, setMounted] = useState(false)
@@ -1594,6 +1623,14 @@ export default function Dashboard() {
   const { data: ethBal } = useBalance({ address })
   
   const { data: ggxSupply } = useReadContract({ address: CONTRACTS.GGX, abi: ERC20_ABI, functionName: 'totalSupply', query: { refetchInterval: 20000 } })
+
+  // ERAGE staked in HyperDriver = ERAGE balance of the pool contract
+  const { data: hyperdriverErageBal } = useReadContract({ address: CONTRACTS.GGX, abi: ERC20_ABI, functionName: 'balanceOf', args: [CONTRACTS.HYPERDRIVER_ERAGE_POOL], query: { refetchInterval: 30000 } })
+  const hyperdriverStakedPct = useMemo(() => {
+    if (hyperdriverErageBal === undefined || !ggxSupply || ggxSupply === 0n) return null
+    // basis points with bigint math, then to a percent
+    return Number((hyperdriverErageBal * 100_000n) / ggxSupply) / 1000
+  }, [hyperdriverErageBal, ggxSupply])
   
   // GGX contract data — refetch frequently to keep ratio/balances fresh after mints/redeems
   const { data: backingRatio } = useReadContract({ address: CONTRACTS.GGX, abi: GGX_ABI, functionName: 'getBackingRatio', query: { refetchInterval: 20000 } })
@@ -2794,7 +2831,9 @@ export default function Dashboard() {
       <div className="relative z-10 min-h-full lg:h-full flex flex-col lg:overflow-hidden">
         {/* Header */}
         <header className="px-3 sm:px-4 py-1" style={{ background: 'transparent' }}>
-          <div className="max-w-7xl mx-auto flex items-center justify-between gap-2">
+          <div className="max-w-7xl mx-auto flex items-center justify-between gap-2 relative">
+            {/* Centered on desktop */}
+            <HyperDriverCTA pct={hyperdriverStakedPct} className="hidden lg:flex absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10" />
             <div className="flex items-center gap-2 sm:gap-3 min-w-0">
               <img src="/ERAGE-logo.webp" className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl object-cover shrink-0 animate-pulse-glow" alt="ERAGE" />
               <div className="min-w-0">
@@ -2840,6 +2879,10 @@ export default function Dashboard() {
                 </button>
               )}
             </div>
+          </div>
+          {/* Full-width row under the header on smaller screens */}
+          <div className="lg:hidden max-w-7xl mx-auto mt-1.5">
+            <HyperDriverCTA pct={hyperdriverStakedPct} className="flex w-full" />
           </div>
         </header>
         
