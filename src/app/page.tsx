@@ -2409,10 +2409,51 @@ export default function Dashboard() {
   // rather than from the Uniswap market price. This avoids the need for a
   // price-efficiency fudge factor and stays accurate when GGX trades at a
   // premium or discount on Uniswap.
+  // ---- ETH zap estimate, priced by the contract itself ----
+  // The old estimate divided ETH by the backing value per ERAGE. But minting is
+  // priced at the contract's mint rate = MAX(backing ratio, ggxPerPair), which can
+  // sit well above the backing ratio — so the estimate (and therefore the zap's
+  // minErageOut) came out too high and the zap reverted with "slippage too high".
+  // Now: estimate how much ESHARE the zap will end up pairing (after the 0.69% zap
+  // tax and pool fees), then ask the contract's getMintOutput() what that mints.
+  const zapEshareEstimateWei = useMemo<bigint | null>(() => {
+    if (inputToken !== 'ETH' || !inputAmount || !backingRatio) return null
+    const ethAmount = parseFloat(inputAmount)
+    if (isNaN(ethAmount) || ethAmount <= 0) return null
+    const [esPerWei, raPerWei] = backingRatio
+    const esPer = parseFloat(formatUnits(esPerWei, 18))
+    const raPer = parseFloat(formatUnits(raPerWei, 18))
+    if (esPer <= 0 || prices.esharePrice <= 0 || prices.ragePrice <= 0 || prices.ethPriceUsd <= 0) return null
+    const rageEth = prices.ragePriceInUsdc ? prices.ragePrice / prices.ethPriceUsd : prices.ragePrice
+    // ETH cost of 1 ESHARE plus the matching RAGE
+    const ethPerEshareUnit = prices.esharePrice + (raPer / esPer) * rageEth
+    if (ethPerEshareUnit <= 0) return null
+    const ZAP_TAX_MULT = 1 - 69 / 10_000 // 0.69% zap tax
+    const SWAP_FEE_MULT = 0.985          // 1% pools on both legs (+0.05% WETH/USDC hop) and a little impact
+    const eshare = (ethAmount * ZAP_TAX_MULT * SWAP_FEE_MULT) / ethPerEshareUnit
+    if (!isFinite(eshare) || eshare <= 0) return null
+    try { return parseUnits(eshare.toFixed(18), 18) } catch { return null }
+  }, [inputToken, inputAmount, backingRatio, prices.esharePrice, prices.ragePrice, prices.ragePriceInUsdc, prices.ethPriceUsd])
+
+  const { data: zapMintPreview } = useReadContract({
+    address: CONTRACTS.GGX,
+    abi: GGX_ABI,
+    functionName: 'getMintOutput',
+    args: zapEshareEstimateWei ? [zapEshareEstimateWei] : undefined,
+    query: { enabled: !!zapEshareEstimateWei && zapEshareEstimateWei > 0n, refetchInterval: 20000 },
+  })
+
   const estimatedGgxFromEth = useMemo(() => {
     if (!inputAmount) return null
     const ethAmount = parseFloat(inputAmount)
     if (isNaN(ethAmount) || ethAmount <= 0) return null
+
+    // Preferred: the contract's own mint preview (includes mint rate + mint taxes)
+    if (zapMintPreview) {
+      const [ggxOut] = zapMintPreview as readonly [bigint, bigint, bigint, bigint, bigint, bigint]
+      const out = parseFloat(formatUnits(ggxOut, 18))
+      if (out > 0) return out
+    }
 
     // On-chain mint tax (220 BPS = 2.2% as of v5.2; was 250 BPS / 2.5%)
     const mintTaxBps = Number(totalTaxBps || 220)
@@ -2446,7 +2487,7 @@ export default function Dashboard() {
     } else {
       return uniOutput * totalEfficiency
     }
-  }, [inputAmount, prices.ggxPrice, priceEfficiencyRatio, ggxBackingValue, totalTaxBps])
+  }, [inputAmount, prices.ggxPrice, priceEfficiencyRatio, ggxBackingValue, totalTaxBps, zapMintPreview])
 
   // ============ Auto-Slippage (v5.1) ============
   // Baseline 11% covers on-chain execution variance on the ETH zap path
