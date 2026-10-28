@@ -2409,31 +2409,42 @@ export default function Dashboard() {
   // rather than from the Uniswap market price. This avoids the need for a
   // price-efficiency fudge factor and stays accurate when GGX trades at a
   // premium or discount on Uniswap.
-  // ---- ETH zap estimate, priced by the contract itself ----
-  // The old estimate divided ETH by the backing value per ERAGE. But minting is
-  // priced at the contract's mint rate = MAX(backing ratio, ggxPerPair), which can
-  // sit well above the backing ratio — so the estimate (and therefore the zap's
-  // minErageOut) came out too high and the zap reverted with "slippage too high".
-  // Now: estimate how much ESHARE the zap will end up pairing (after the 0.69% zap
-  // tax and pool fees), then ask the contract's getMintOutput() what that mints.
+  // ---- ETH zap estimate: mirrors what the Zap contract actually does ----
+  // Read from the verified ERAGEZapV5_Optimized bytecode + past zap transactions:
+  //  1. Takes the 0.69% ETH tax.
+  //  2. Tries to size the ETH split with QuoterV2 — but the ESHARE quote fails
+  //     (every zap logs "SplitFallbackTo5050: ESHARE quote failed"), so it always
+  //     splits 50/50: half the ETH buys ESHARE (1% pool), half buys RAGE via
+  //     WETH→USDC (0.05%) → RAGE (1%).
+  //  3. If it ends up with excess ESHARE, it swaps half the excess to RAGE.
+  //     Excess RAGE is NOT rebalanced — it's refunded to the user.
+  //  4. Mints with min(ESHARE, RAGE) — mint() pairs them 1:1 by amount.
+  //  5. The ONLY slippage check is ERAGE out >= minErageOut (swaps use no minimum).
+  // The old estimate assumed a perfect split, so when ESHARE and RAGE prices
+  // drifted apart the zap produced far less than estimated and reverted.
   const zapEshareEstimateWei = useMemo<bigint | null>(() => {
-    if (inputToken !== 'ETH' || !inputAmount || !backingRatio) return null
+    if (inputToken !== 'ETH' || !inputAmount) return null
     const ethAmount = parseFloat(inputAmount)
     if (isNaN(ethAmount) || ethAmount <= 0) return null
-    const [esPerWei, raPerWei] = backingRatio
-    const esPer = parseFloat(formatUnits(esPerWei, 18))
-    const raPer = parseFloat(formatUnits(raPerWei, 18))
-    if (esPer <= 0 || prices.esharePrice <= 0 || prices.ragePrice <= 0 || prices.ethPriceUsd <= 0) return null
-    const rageEth = prices.ragePriceInUsdc ? prices.ragePrice / prices.ethPriceUsd : prices.ragePrice
-    // ETH cost of 1 ESHARE plus the matching RAGE
-    const ethPerEshareUnit = prices.esharePrice + (raPer / esPer) * rageEth
-    if (ethPerEshareUnit <= 0) return null
-    const ZAP_TAX_MULT = 1 - 69 / 10_000 // 0.69% zap tax
-    const SWAP_FEE_MULT = 0.985          // 1% pools on both legs (+0.05% WETH/USDC hop) and a little impact
-    const eshare = (ethAmount * ZAP_TAX_MULT * SWAP_FEE_MULT) / ethPerEshareUnit
-    if (!isFinite(eshare) || eshare <= 0) return null
-    try { return parseUnits(eshare.toFixed(18), 18) } catch { return null }
-  }, [inputToken, inputAmount, backingRatio, prices.esharePrice, prices.ragePrice, prices.ragePriceInUsdc, prices.ethPriceUsd])
+    if (prices.esharePrice <= 0 || prices.ragePrice <= 0 || prices.ethPriceUsd <= 0) return null
+    const esEth = prices.esharePrice                                   // ETH per ESHARE
+    const raEth = prices.ragePriceInUsdc ? prices.ragePrice / prices.ethPriceUsd : prices.ragePrice // ETH per RAGE
+    if (esEth <= 0 || raEth <= 0) return null
+
+    const ethNet = ethAmount * (1 - 69 / 10_000)    // zap tax
+    const half = ethNet / 2                          // 50/50 fallback split
+    let es = (half * 0.99) / esEth                   // WETH→ESHARE, 1% pool
+    let ra = (half * 0.9995 * 0.99) / raEth          // WETH→USDC 0.05% → RAGE 1%
+    // Rebalance only when ESHARE is in excess by more than the 0.5% threshold
+    if (es > ra && (es - ra) / es > 0.005) {
+      const swapIn = (es - ra) / 2
+      es -= swapIn
+      ra += (swapIn * esEth / raEth) * 0.99 * 0.9995 * 0.99 // ESHARE→WETH→USDC→RAGE fees
+    }
+    const pair = Math.min(es, ra) * 0.99 // ~1% cushion for price impact
+    if (!isFinite(pair) || pair <= 0) return null
+    try { return parseUnits(pair.toFixed(18), 18) } catch { return null }
+  }, [inputToken, inputAmount, prices.esharePrice, prices.ragePrice, prices.ragePriceInUsdc, prices.ethPriceUsd])
 
   const { data: zapMintPreview } = useReadContract({
     address: CONTRACTS.GGX,
