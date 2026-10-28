@@ -252,6 +252,27 @@ const ZAP_ABI = [
 ] as const
 
 // ============ UTILITY FUNCTIONS ============
+// Parse a typed token amount safely (empty, "." or garbage → 0n instead of throwing)
+const safeParseUnits = (val: string, dec = 18): bigint => {
+  if (!val) return 0n
+  try { return parseUnits(val, dec) } catch { return 0n }
+}
+
+// Round a bigint token amount (18 decimals) DOWN to 6 decimals and return it as a
+// plain decimal string. Avoids float rounding and "1e-7"-style strings that
+// parseUnits can't read.
+const toInputString = (wei: bigint, roundUp = false): string => {
+  const step = 10n ** 12n
+  const rounded = roundUp ? ((wei + step - 1n) / step) * step : (wei / step) * step
+  return formatUnits(rounded, 18)
+}
+
+// Number → plain 6-decimal string, rounded down (for the auto-filled other side)
+const floor6 = (n: number): string => {
+  if (!isFinite(n) || n <= 0) return ''
+  return (Math.floor(n * 1_000_000) / 1_000_000).toFixed(6).replace(/\.?0+$/, '')
+}
+
 const formatAmount = (num: number): string => {
   if (!num) return '0.00'
   if (num < 0.000001) return '0.000000'
@@ -1496,6 +1517,12 @@ export default function Dashboard() {
   // Users can override via the "Adjust" input. Auto uses MAX(11%, 11% + pool_consumption_pct).
   const SLIPPAGE_MAX_PCT = 15
   const SLIPPAGE_MIN_PCT = 11
+  // ETH zap: much wider tolerance. The zap goes through 1% fee pools on both legs,
+  // pays the 0.69% zap tax and the mint tax, and refunds any unpaired leftover, so
+  // the real output can land well below the frontend estimate — small zaps were
+  // reverting with "ERAGEZap: slippage too high" at 11%.
+  const ZAP_SLIPPAGE_MIN_PCT = 25
+  const ZAP_SLIPPAGE_MAX_PCT = 40
   const [slippageMode, setSlippageMode] = useState<'auto' | 'manual'>('auto')
   const [slippageManual, setSlippageManual] = useState('11')
 
@@ -1984,18 +2011,51 @@ export default function Dashboard() {
     }
   }, [inputToken, ethBal, ggxBal])
   
+  // ---- Direct mint amounts ----
+  // mint() only takes the ESHARE amount; the contract works out the matching RAGE
+  // itself. The RAGE box is a rounded estimate, so the contract can need a hair
+  // more than it shows. rageNeededWei is our best on-chain-style figure (rounded
+  // up), and every check/approval below uses it instead of the rounded box value.
+  const eshareWeiTyped = useMemo(() => safeParseUnits(eshareInput), [eshareInput])
+  const rageNeededWei = useMemo(() => {
+    const typed = safeParseUnits(rageInput)
+    if (!backingRatio || backingRatio[0] === 0n || eshareWeiTyped === 0n) return typed
+    const [esPer, raPer] = backingRatio
+    const computed = (eshareWeiTyped * raPer + esPer - 1n) / esPer
+    return computed > typed ? computed : typed
+  }, [rageInput, backingRatio, eshareWeiTyped])
+  // Approve a little extra RAGE (0.5%) so rounding can never leave the approval short
+  const rageApproveWei = (rageNeededWei * 10050n) / 10000n
+
+  const insufficientEshare = inputToken === 'ESHARE_RAGE' && eshareWeiTyped > 0n && eshareBal !== undefined && eshareWeiTyped > eshareBal
+  const insufficientRage = inputToken === 'ESHARE_RAGE' && rageNeededWei > 0n && rageBal !== undefined && rageNeededWei > rageBal
+
+  // Largest pair the wallet can actually mint: limited by whichever token runs
+  // out first, minus a 0.1% safety margin, rounded down to 6 decimals.
+  const fillMaxPair = () => {
+    if (!eshareBal || !rageBal || !backingRatio) return
+    const [esPer, raPer] = backingRatio
+    if (esPer === 0n || raPer === 0n) return
+    const eshareFromRage = (rageBal * esPer) / raPer
+    let es = eshareBal < eshareFromRage ? eshareBal : eshareFromRage
+    es = (es * 9990n) / 10000n
+    es = (es / 10n ** 12n) * 10n ** 12n
+    if (es <= 0n) { setEshareInput(''); setRageInput(''); return }
+    const ra = (es * raPer + esPer - 1n) / esPer
+    setEshareInput(toInputString(es))
+    setRageInput(toInputString(ra, true))
+  }
+
   // Check if approval is needed (per-token)
   const needsEshareApproval = useMemo(() => {
     if (inputToken !== 'ESHARE_RAGE') return false
-    const eshareWei = eshareInput ? parseUnits(eshareInput, 18) : 0n
-    return eshareWei > 0n && (!eshareAllowGGX || eshareAllowGGX < eshareWei)
-  }, [inputToken, eshareInput, eshareAllowGGX])
+    return eshareWeiTyped > 0n && (!eshareAllowGGX || eshareAllowGGX < eshareWeiTyped)
+  }, [inputToken, eshareWeiTyped, eshareAllowGGX])
 
   const needsRageApproval = useMemo(() => {
     if (inputToken !== 'ESHARE_RAGE') return false
-    const rageWei = rageInput ? parseUnits(rageInput, 18) : 0n
-    return rageWei > 0n && (!rageAllowGGX || rageAllowGGX < rageWei)
-  }, [inputToken, rageInput, rageAllowGGX])
+    return rageNeededWei > 0n && (!rageAllowGGX || rageAllowGGX < rageNeededWei)
+  }, [inputToken, rageNeededWei, rageAllowGGX])
 
   const needsApproval = needsEshareApproval || needsRageApproval
   
@@ -2429,8 +2489,8 @@ export default function Dashboard() {
     const bindingLegPct = Math.max(eshareLegPct, rageLegPct)
 
     // Base 11% + 1% additional tolerance for each 1% of pool consumed.
-    const auto = SLIPPAGE_MIN_PCT + bindingLegPct
-    return Math.min(Math.max(auto, SLIPPAGE_MIN_PCT), SLIPPAGE_MAX_PCT)
+    const auto = ZAP_SLIPPAGE_MIN_PCT + bindingLegPct
+    return Math.min(Math.max(auto, ZAP_SLIPPAGE_MIN_PCT), ZAP_SLIPPAGE_MAX_PCT)
   }, [inputToken, inputAmount, eshareLpWethBal, rageLpUsdcBal, prices.ethPriceUsd])
 
   // Final slippage pct used by the mint/zap transaction. Manual mode wins if user opted in.
@@ -2438,7 +2498,7 @@ export default function Dashboard() {
     if (slippageMode === 'manual') {
       const v = parseFloat(slippageManual)
       if (isNaN(v) || v <= 0) return autoSlippagePct
-      return Math.min(v, SLIPPAGE_MAX_PCT)
+      return Math.min(v, inputToken === 'ETH' ? ZAP_SLIPPAGE_MAX_PCT : SLIPPAGE_MAX_PCT)
     }
     return autoSlippagePct
   }, [slippageMode, slippageManual, autoSlippagePct])
@@ -2485,8 +2545,9 @@ export default function Dashboard() {
       })
     } else if (inputToken === 'ESHARE_RAGE') {
       // Direct mint with both ESHARE and RAGE (GGX contract, NOT Zapper)
-      if (!eshareInput || parseFloat(eshareInput) === 0) return
-      const eshareWei = parseUnits(eshareInput, 18)
+      if (eshareWeiTyped === 0n) return
+      if (insufficientEshare || insufficientRage) return
+      const eshareWei = eshareWeiTyped
 
       // v5: mint() now takes (tokenAmount, minGgxOut). Use on-chain getMintOutput preview × slippage.
       let minGgxOut = 0n
@@ -2513,8 +2574,10 @@ export default function Dashboard() {
   }
 
   const handleApproveRage = () => {
-    if (!rageInput || parseFloat(rageInput) === 0) return
-    handleApprove(CONTRACTS.RAGE, CONTRACTS.GGX, rageInput)
+    if (rageApproveWei === 0n) return
+    pendingLabelRef.current = 'RAGE approved'
+    // Covers the contract's exact RAGE pull + 0.5% for rounding
+    writeContract({ address: CONTRACTS.RAGE, abi: ERC20_ABI, functionName: 'approve', args: [CONTRACTS.GGX, rageApproveWei] })
   }
   
   // Admin handlers
@@ -2952,8 +3015,7 @@ export default function Dashboard() {
                                     if (esharePerGGX > 0 && !isNaN(numVal) && numVal > 0) {
                                       const ratio = ragePerGGX / esharePerGGX
                                       const rageAmount = numVal * ratio
-                                      const rageRounded = Math.floor(rageAmount * 1000000) / 1000000
-                                      setRageInput(rageRounded.toString())
+                                      setRageInput(floor6(rageAmount))
                                     }
                                   }
                                 }} 
@@ -2961,23 +3023,8 @@ export default function Dashboard() {
                                 className="w-full bg-transparent text-base font-mono focus:outline-none" 
                               />
                               <button 
-                                onClick={() => {
-                                  if (eshareBal) {
-                                    const rawBalance = parseFloat(formatUnits(eshareBal, 18))
-                                    const roundedDown = Math.floor(rawBalance * 1000000) / 1000000
-                                    setEshareInput(roundedDown.toString())
-                                    if (backingRatio && backingRatio[0] && backingRatio[1]) {
-                                      const esharePerGGX = parseFloat(formatUnits(backingRatio[0], 18))
-                                      const ragePerGGX = parseFloat(formatUnits(backingRatio[1], 18))
-                                      if (esharePerGGX > 0) {
-                                        const ratio = ragePerGGX / esharePerGGX
-                                        const rageAmount = roundedDown * ratio
-                                        const rageRounded = Math.floor(rageAmount * 1000000) / 1000000
-                                        setRageInput(rageRounded.toString())
-                                      }
-                                    }
-                                  }
-                                }}
+                                onClick={fillMaxPair}
+                                title="Largest ESHARE + RAGE pair your wallet can mint"
                                 className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[#8B5CF6] hover:text-[#A78BFA] font-medium"
                               >
                                 MAX
@@ -3002,8 +3049,7 @@ export default function Dashboard() {
                                     if (ragePerGGX > 0 && !isNaN(numVal) && numVal > 0) {
                                       const ratio = esharePerGGX / ragePerGGX
                                       const eshareAmount = numVal * ratio
-                                      const eshareRounded = Math.floor(eshareAmount * 1000000) / 1000000
-                                      setEshareInput(eshareRounded.toString())
+                                      setEshareInput(floor6(eshareAmount))
                                     }
                                   }
                                 }} 
@@ -3011,23 +3057,8 @@ export default function Dashboard() {
                                 className="w-full bg-transparent text-base font-mono focus:outline-none" 
                               />
                               <button 
-                                onClick={() => {
-                                  if (rageBal) {
-                                    const rawBalance = parseFloat(formatUnits(rageBal, 18))
-                                    const roundedDown = Math.floor(rawBalance * 1000000) / 1000000
-                                    setRageInput(roundedDown.toString())
-                                    if (backingRatio && backingRatio[0] && backingRatio[1]) {
-                                      const esharePerGGX = parseFloat(formatUnits(backingRatio[0], 18))
-                                      const ragePerGGX = parseFloat(formatUnits(backingRatio[1], 18))
-                                      if (ragePerGGX > 0) {
-                                        const ratio = esharePerGGX / ragePerGGX
-                                        const eshareAmount = roundedDown * ratio
-                                        const eshareRounded = Math.floor(eshareAmount * 1000000) / 1000000
-                                        setEshareInput(eshareRounded.toString())
-                                      }
-                                    }
-                                  }
-                                }}
+                                onClick={fillMaxPair}
+                                title="Largest ESHARE + RAGE pair your wallet can mint"
                                 className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[#EF4444] hover:text-[#F87171] font-medium"
                               >
                                 MAX
@@ -3225,13 +3256,13 @@ export default function Dashboard() {
                                 type="number"
                                 step="0.1"
                                 min="0.1"
-                                max="15"
+                                max={inputToken === 'ETH' ? ZAP_SLIPPAGE_MAX_PCT : SLIPPAGE_MAX_PCT}
                                 value={slippageManual}
                                 onChange={(e) => setSlippageManual(e.target.value)}
                                 placeholder="Manual"
                                 className="w-full bg-transparent text-[11px] py-1 px-1 focus:outline-none"
                               />
-                              <span className="text-[10px] text-gray-400">% (max 15)</span>
+                              <span className="text-[10px] text-gray-400">% (max {inputToken === 'ETH' ? ZAP_SLIPPAGE_MAX_PCT : SLIPPAGE_MAX_PCT})</span>
                             </div>
                           )}
                           <p className="text-[9px] text-gray-500 leading-snug text-center">
@@ -3253,7 +3284,11 @@ export default function Dashboard() {
                                   Auto-Slippage -Adjust-
                                 </button>
                                 */}
-                                {inputToken === 'ETH' && 'Recommended: 1 ETH or less per mint.'}
+                                {inputToken === 'ETH' && (
+                                  inputAmount && parseFloat(inputAmount) > 0 && parseFloat(inputAmount) < 0.003
+                                    ? <span className="text-[#F59E0B]">Very small zaps can fail — fees eat most of it. Try 0.003 ETH or more.</span>
+                                    : 'Recommended: 1 ETH or less per mint.'
+                                )}
                                 {inputToken === 'ESHARE_RAGE' && 'Mint ERAGE with 1:1 ESHARE+RAGE'}
                               </>
                             ) : (
@@ -3271,6 +3306,13 @@ export default function Dashboard() {
                         >
                           <Wallet size={16} /> Connect Wallet
                         </button>
+                      ) : insufficientEshare || insufficientRage ? (
+                        <button
+                          disabled
+                          className="w-full py-2.5 rounded-lg text-sm font-semibold bg-white/5 text-gray-400 border border-white/10 cursor-not-allowed"
+                        >
+                          {insufficientEshare ? 'Insufficient ESHARE' : 'Insufficient RAGE'}
+                        </button>
                       ) : inputToken === 'ESHARE_RAGE' && needsApproval ? (
                         <div className="flex gap-2">
                           <button 
@@ -3282,7 +3324,7 @@ export default function Dashboard() {
                           </button>
                           <button 
                             onClick={handleApproveRage} 
-                            disabled={isLoading || !rageInput || parseFloat(rageInput) === 0 || !needsRageApproval}
+                            disabled={isLoading || rageNeededWei === 0n || !needsRageApproval}
                             className={`w-1/2 py-2.5 rounded-lg text-sm font-semibold bg-[#8B5CF6] hover:bg-[#8B5CF6]/80 ${needsRageApproval ? '' : 'opacity-30 cursor-not-allowed'}`}
                           >
                             Approve RAGE
