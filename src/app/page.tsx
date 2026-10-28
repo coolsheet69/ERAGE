@@ -1719,17 +1719,9 @@ export default function Dashboard() {
   // Loading state for transactions
   const isLoading = isPending || isConfirming
   
-  // Refresh helper: re-fetches live data but skips reads that never change
-  // (pool token addresses, decimals, symbols, fee tiers, contract config).
-  // invalidateQueries() ignores staleTime, so without this every refresh
-  // re-fired dozens of static RPC calls alongside the price reads.
-  const STATIC_FNS = new Set(['token0', 'token1', 'decimals', 'symbol', 'fee', 'uniswapV3Router', 'weth', 'erage', 'usdc', 'quoter', 'adminWallet'])
-  const refreshLiveData = () => queryClient.invalidateQueries({
-    predicate: (q) => {
-      const params = q.queryKey[1] as { functionName?: string } | undefined
-      return !(params?.functionName && STATIC_FNS.has(params.functionName))
-    },
-  })
+  // Refresh helper — same as production: refetch EVERY read (balances, allowances,
+  // previews, prices) so nothing the mint button depends on can go stale.
+  const refreshLiveData = () => queryClient.invalidateQueries()
 
   // Track previous txHash to detect new transactions
   const prevTxHashRef = useRef<string | undefined>(undefined)
@@ -1769,16 +1761,20 @@ export default function Dashboard() {
       setTxFlash(true)
       pendingLabelRef.current = DEFAULT_TX_LABEL
       // Force refetch all queries immediately + staggered to catch block updates
+      // Force refetch all queries immediately + staggered to catch block updates
+      // (same cadence as production)
       refreshLiveData()
+      setTimeout(refreshLiveData, 500)
       setTimeout(refreshLiveData, 2000)
-      setTimeout(refreshLiveData, 6000)
+      setTimeout(refreshLiveData, 5000)
+      setTimeout(refreshLiveData, 8000)
     }
   }, [isConfirmed, txHash, queryClient])
   
   // Auto-refresh every 15 seconds for contract data
   useEffect(() => {
     const interval = setInterval(() => {
-      if (document.visibilityState === 'visible') refreshLiveData()
+      refreshLiveData()
     }, 30000)
     return () => clearInterval(interval)
   }, [queryClient])
