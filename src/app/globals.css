@@ -538,7 +538,8 @@
 }
 
 .hd-cta {
-  position: relative;
+  /* No position/transform here: this CSS sits outside Tailwind's layers, so it
+     would override layout utilities on the same element. */
   border-radius: 9999px;
   padding: 1.5px;
   background: conic-gradient(from var(--hd-angle), #FF6B35, #A855F7, #FFD700, #FF6B35);
@@ -549,7 +550,7 @@
 }
 
 .hd-cta:hover {
-  transform: translateY(-1px) scale(1.02);
+  filter: brightness(1.12);
 }
 
 .hd-cta-inner {

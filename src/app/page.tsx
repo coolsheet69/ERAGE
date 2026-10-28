@@ -2831,10 +2831,11 @@ export default function Dashboard() {
       <div className="relative z-10 min-h-full lg:h-full flex flex-col lg:overflow-hidden">
         {/* Header */}
         <header className="px-3 sm:px-4 py-1" style={{ background: 'transparent' }}>
-          <div className="max-w-7xl mx-auto flex items-center justify-between gap-2 relative">
-            {/* Centered on desktop */}
-            <HyperDriverCTA pct={hyperdriverStakedPct} className="hidden lg:flex absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10" />
-            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          {/* 3-column grid: left (logo) | center (HyperDriver CTA, desktop only) | right (wallet).
+              The two side columns are equal 1fr, so the CTA is truly centered without any
+              absolute positioning — nothing can overlap or get pushed around. */}
+          <div className="max-w-7xl mx-auto grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0 justify-self-start">
               <img src="/ERAGE-logo.webp" className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl object-cover shrink-0 animate-pulse-glow" alt="ERAGE" />
               <div className="min-w-0">
                 <h1 className="text-sm sm:text-lg font-bold tracking-tight truncate">ERAGE Protocol</h1>
@@ -2846,7 +2847,13 @@ export default function Dashboard() {
 
             </div>
             
-            <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+            {/* Centered on desktop (empty middle column on smaller screens) */}
+            <div className="hidden lg:flex justify-center">
+              <HyperDriverCTA pct={hyperdriverStakedPct} className="flex" />
+            </div>
+            <div className="lg:hidden" />
+
+            <div className="flex items-center gap-1 sm:gap-2 shrink-0 justify-self-end">
               {isConnected ? (
                 <>
                   <div className="flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 bg-white/5 rounded-xl border border-white/10">
