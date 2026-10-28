@@ -14,6 +14,7 @@
 // =============================================
 
 import { useAccount, useConnect, useDisconnect, useReadContract, useWriteContract, useWaitForTransactionReceipt, useSwitchChain, useBalance, useWatchContractEvent } from 'wagmi'
+import type { Connector } from 'wagmi'
 import { useQueryClient } from '@tanstack/react-query'
 import { parseUnits, formatUnits, parseAbiItem } from 'viem'
 import { base } from 'wagmi/chains'
@@ -1491,7 +1492,38 @@ export default function Dashboard() {
   }, [])
   
   const { address, isConnected, chain } = useAccount()
-  const { connectors, connect, isPending: isConnecting } = useConnect()
+  const { connectors, connect, isPending: isConnecting, error: connectError } = useConnect()
+
+  // ---- Wallet picker ----
+  // The old button always used connectors[0] (generic "injected" = window.ethereum).
+  // With more than one wallet extension installed they fight over window.ethereum
+  // ("Cannot redefine property: ethereum") and that generic connector can end up
+  // pointing at a broken provider. wagmi also discovers each installed wallet
+  // directly (EIP-6963), so we list those and let the user pick — each one talks
+  // to its own extension and sidesteps the conflict.
+  const [showWalletMenu, setShowWalletMenu] = useState(false)
+  const walletOptions = useMemo(() => {
+    const seen = new Set<string>()
+    const list: Connector[] = []
+    const sorted = [...connectors].sort((a, b) => (b.icon ? 1 : 0) - (a.icon ? 1 : 0))
+    for (const c of sorted) {
+      const key = c.name.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      list.push(c)
+    }
+    // Hide the generic "Injected" entry when specific browser wallets were detected
+    const hasSpecific = list.some((c) => c.type === 'injected' && c.id !== 'injected')
+    return list.filter((c) => !(c.id === 'injected' && hasSpecific))
+  }, [connectors])
+  const openWalletMenu = () => {
+    if (walletOptions.length === 1) connect({ connector: walletOptions[0] })
+    else setShowWalletMenu(true)
+  }
+  const handleConnect = (c: Connector) => {
+    setShowWalletMenu(false)
+    connect({ connector: c })
+  }
   const { disconnect } = useDisconnect()
   const { switchChain } = useSwitchChain()
   
@@ -1769,6 +1801,17 @@ export default function Dashboard() {
     const t = setTimeout(() => setTxFlash(false), 1400)
     return () => clearTimeout(t)
   }, [txFlash])
+
+  useEffect(() => {
+    if (!connectError) return
+    const err = connectError as { name?: string; shortMessage?: string; message?: string }
+    const rejected = err.name === 'UserRejectedRequestError' || /user (rejected|denied)/i.test(err.message ?? '')
+    setToast({
+      kind: 'error',
+      title: rejected ? 'Connection cancelled in wallet' : 'Could not connect wallet',
+      detail: rejected ? undefined : `${(err.shortMessage ?? err.message ?? '').slice(0, 120)} — try picking your wallet by name, or disable other wallet extensions.`,
+    })
+  }, [connectError])
 
   useEffect(() => {
     if (!writeError) return
@@ -2792,7 +2835,7 @@ export default function Dashboard() {
                   </button>
                 </>
               ) : (
-                <button onClick={() => connect({ connector: connectors[0] })} disabled={isConnecting} className="px-3 sm:px-5 py-2 sm:py-2.5 text-xs sm:text-sm btn-primary rounded-xl font-medium disabled:opacity-50 flex items-center gap-2">
+                <button onClick={openWalletMenu} disabled={isConnecting} className="px-3 sm:px-5 py-2 sm:py-2.5 text-xs sm:text-sm btn-primary rounded-xl font-medium disabled:opacity-50 flex items-center gap-2">
                   <Wallet size={14} className="sm:hidden" /><Wallet size={16} className="hidden sm:block" /> Connect
                 </button>
               )}
@@ -3352,7 +3395,7 @@ export default function Dashboard() {
                       {/* Action Buttons */}
                       {!isConnected ? (
                         <button 
-                          onClick={() => connect({ connector: connectors[0] })} 
+                          onClick={openWalletMenu} 
                           disabled={isConnecting}
                           className="w-full py-2.5 rounded-lg text-sm font-semibold btn-primary disabled:opacity-50 flex items-center justify-center gap-2"
                         >
@@ -3802,6 +3845,41 @@ export default function Dashboard() {
             </div>
         </main>
       </div>
+
+      {/* Wallet picker */}
+      {showWalletMenu && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4" onClick={() => setShowWalletMenu(false)}>
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+          <div
+            role="dialog"
+            aria-label="Choose a wallet"
+            className="relative w-full max-w-xs rounded-2xl bg-[#0F0F10] border border-[#FF6B35]/30 shadow-2xl p-3 toast-in"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm font-semibold">Connect a wallet</p>
+              <button onClick={() => setShowWalletMenu(false)} aria-label="Close" className="text-gray-500 hover:text-white p-1 rounded">
+                <X size={14} />
+              </button>
+            </div>
+            <div className="space-y-1.5">
+              {walletOptions.map((c) => (
+                <button
+                  key={c.uid}
+                  onClick={() => handleConnect(c)}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 hover:border-[#FF6B35]/40 transition-colors text-sm text-left"
+                >
+                  {c.icon
+                    ? <img src={c.icon} alt="" className="w-6 h-6 rounded-md" />
+                    : <span className="w-6 h-6 rounded-md bg-white/10 flex items-center justify-center"><Wallet size={14} /></span>}
+                  <span>{c.id === 'injected' ? 'Browser wallet' : c.name}</span>
+                </button>
+              ))}
+            </div>
+            <p className="text-[10px] text-gray-500 mt-2">Have several wallet extensions? Pick the one you want by name.</p>
+          </div>
+        </div>
+      )}
 
       {/* Transaction toast */}
       {toast && (
