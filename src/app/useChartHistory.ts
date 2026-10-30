@@ -98,7 +98,7 @@ export function useChartHistory(): ChartHistoryState {
     fetch('/api/chart-history', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'price', point }),
+      body: JSON.stringify({ type: 'price03', point }), // 0.3%-pool series (see api/chart-history)
     }).catch(() => {})
   }, [])
 

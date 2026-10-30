@@ -1,77 +1,90 @@
 import { NextResponse } from 'next/server'
 import { createClient } from 'redis'
 
-const PRICE_KEY = 'erage:priceEfficiency'
+// ===== KEYS =====
+// The price-efficiency chart moved its ERAGE price feed from the 1% pool to the
+// 0.3% pool. Those two pools differ by a few percent, and the history is built
+// from points that EVERY visitor's browser posts. Browsers still running the old
+// site kept posting 1%-pool values into the same series, so the chart zig-zagged
+// between two levels (e.g. 0.96 ↔ 1.04).
+//
+// Fix: the 0.3%-pool series lives under its own key and its own type ('price03').
+// Old clients still post type 'price' → they write to the OLD key, which nothing
+// reads anymore, so they can't pollute the chart. GET serves the new series to
+// everyone (as `priceHistory`, the field name both old and new clients read).
+const PRICE_KEY_LEGACY = 'erage:priceEfficiency'      // 1% pool feed — retired, write-only for old clients
+const PRICE_KEY = 'erage:priceEfficiency:p03'          // 0.3% pool feed — current
 const BACKING_KEY = 'erage:backingRatio'
 const MAX_POINTS = 20000
 const RETENTION_MS = 7 * 24 * 60 * 60 * 1000
+const MIN_SPACING_MS = 10_000
 
-// ===== SERVER-SIDE VALIDATION =====
-// The chart's price feed is now sourced from the 1% fee tier ERAGE-ETH pool.
-// That pool's deeper, less-concentrated liquidity has eliminated the spike-
-// down artifacts that the 0.3% pool produced, so the elaborate rate-of-change
-// filter that was previously here is no longer needed. The only validation
-// retained is absolute sanity bounds — values that are mathematically
-// impossible or computational nonsense (NaN, Infinity, zero, negatives,
-// astronomical values). Everything a real market can produce passes through.
+type PointType = 'price' | 'price03' | 'backing'
+type Point = { time: number; ratio: number }
 
-const PRICE_HARD_MIN = 0.01  // mathematical sanity floor
-const PRICE_HARD_MAX = 100   // mathematical sanity ceiling
-const BACKING_HARD_MIN = 1.0 // backing ratio cannot logically be below initial
-const BACKING_HARD_MAX = 10000
-
-function isAbsolutelyInsane(type: string, ratio: number): boolean {
+// ===== VALIDATION =====
+// Price efficiency is kept near 1.0 by arbitrage; anything outside 0.5–2.0 is a
+// bad read. (Legacy series keeps its old loose bounds — nothing reads it.)
+function isInvalid(type: PointType, ratio: number): boolean {
   if (!Number.isFinite(ratio)) return true
-  if (type === 'price') return ratio < PRICE_HARD_MIN || ratio > PRICE_HARD_MAX
-  if (type === 'backing') return ratio < BACKING_HARD_MIN || ratio > BACKING_HARD_MAX
+  if (type === 'price03') return ratio < 0.5 || ratio > 2.0
+  if (type === 'price') return ratio < 0.01 || ratio > 100
+  if (type === 'backing') return ratio < 1.0 || ratio > 10000
   return true
 }
 
+function keyFor(type: PointType) {
+  if (type === 'price03') return PRICE_KEY
+  if (type === 'price') return PRICE_KEY_LEGACY
+  return BACKING_KEY
+}
+
+// ===== REDIS (fails fast) =====
+// Previously an unreachable Redis made requests hang for minutes while the client
+// retried forever. Now: 3s connect timeout, 2 retries, then give up and let the
+// route answer with an empty history.
 let client: ReturnType<typeof createClient> | null = null
+let connecting: Promise<ReturnType<typeof createClient>> | null = null
 
 async function getClient() {
-  if (!client) {
-    client = createClient({ url: process.env.REDIS_URL })
-    client.on('error', (err) => console.error('Redis error:', err))
-    await client.connect()
+  if (client?.isReady) return client
+  if (!process.env.REDIS_URL) throw new Error('REDIS_URL not set')
+  if (!connecting) {
+    const c = createClient({
+      url: process.env.REDIS_URL,
+      socket: {
+        connectTimeout: 3000,
+        reconnectStrategy: (retries) => (retries > 2 ? new Error('Redis unreachable') : 500),
+      },
+    })
+    c.on('error', (err) => console.error('Redis error:', err?.code ?? err?.message ?? err))
+    connecting = c.connect()
+      .then(() => { client = c; return c })
+      .finally(() => { connecting = null })
   }
-  return client
+  return connecting
+}
+
+function cleanSeries(raw: string | null, type: PointType): Point[] {
+  if (!raw) return []
+  const cutoff = Date.now() - RETENTION_MS
+  let parsed: Point[] = []
+  try { parsed = JSON.parse(raw) } catch { return [] }
+  return parsed
+    .filter((p) => p && p.time > cutoff && !isInvalid(type, p.ratio))
+    .sort((a, b) => a.time - b.time)
 }
 
 export async function GET() {
   try {
     const redis = await getClient()
-    const cutoff = Date.now() - RETENTION_MS
-
-    const [priceRaw, backingRaw] = await Promise.all([
-      redis.get(PRICE_KEY),
-      redis.get(BACKING_KEY),
-    ])
-
-    // Scrub on read: drop pre-existing bad points so the chart renders clean
-    // without requiring a manual wipe. Only absolute-sanity rejections —
-    // anything a real market can produce is kept.
-    const scrub = (
-      raw: string | null,
-      type: 'price' | 'backing'
-    ): { time: number; ratio: number }[] => {
-      if (!raw) return []
-      const parsed: { time: number; ratio: number }[] = JSON.parse(raw)
-      const cleaned: { time: number; ratio: number }[] = []
-      for (const p of parsed) {
-        if (p.time <= cutoff) continue
-        if (isAbsolutelyInsane(type, p.ratio)) continue
-        cleaned.push(p)
-      }
-      return cleaned
-    }
-
-    const priceHistory = scrub(priceRaw, 'price')
-    const backingHistory = scrub(backingRaw, 'backing')
-
-    return NextResponse.json({ priceHistory, backingHistory })
+    const [priceRaw, backingRaw] = await Promise.all([redis.get(PRICE_KEY), redis.get(BACKING_KEY)])
+    return NextResponse.json({
+      priceHistory: cleanSeries(priceRaw, 'price03'),
+      backingHistory: cleanSeries(backingRaw, 'backing'),
+    })
   } catch (err) {
-    console.error('GET chart-history error:', err)
+    console.error('GET chart-history error:', (err as Error)?.message ?? err)
     return NextResponse.json({ priceHistory: [], backingHistory: [] })
   }
 }
@@ -79,90 +92,67 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const { type, point } = await req.json()
-    if (!type || !point || typeof point.time !== 'number' || typeof point.ratio !== 'number') {
+    if (!point || typeof point.ratio !== 'number') {
       return NextResponse.json({ ok: false, error: 'invalid_shape' }, { status: 400 })
     }
-    if (type !== 'price' && type !== 'backing') {
+    if (type !== 'price' && type !== 'price03' && type !== 'backing') {
       return NextResponse.json({ ok: false, error: 'invalid_type' }, { status: 400 })
     }
-
-    // Absolute sanity bounds — only catches NaN/Infinity/zero/negatives/astronomical
-    if (isAbsolutelyInsane(type, point.ratio)) {
-      console.warn(`[chart-history] Rejected absolutely-insane ${type} point:`, point.ratio)
-      return NextResponse.json({ ok: false, rejected: 'absolutely_insane' })
+    if (isInvalid(type, point.ratio)) {
+      return NextResponse.json({ ok: false, rejected: 'out_of_bounds' })
     }
 
     const redis = await getClient()
-    const key = type === 'price' ? PRICE_KEY : BACKING_KEY
-    const cutoff = Date.now() - RETENTION_MS
+    const key = keyFor(type)
+    // Server time, not the browser's clock: visitors with a skewed clock used to
+    // insert points out of order, which also made the line jagged.
+    const now = Date.now()
+    const cutoff = now - RETENTION_MS
 
     const raw = await redis.get(key)
-    let history: { time: number; ratio: number }[] = raw ? JSON.parse(raw) : []
-
-    // Filter old points
+    let history: Point[] = []
+    try { history = raw ? JSON.parse(raw) : [] } catch { history = [] }
     history = history.filter((p) => p.time > cutoff)
 
     const last = history[history.length - 1]
-
-    // Throttle: don't add if last point was < 10s ago
-    if (!last || point.time - last.time >= 10000) {
-      history.push(point)
+    if (!last || now - last.time >= MIN_SPACING_MS) {
+      history.push({ time: now, ratio: point.ratio })
       if (history.length > MAX_POINTS) history = history.slice(-MAX_POINTS)
       await redis.set(key, JSON.stringify(history))
     }
-
     return NextResponse.json({ ok: true })
   } catch (err) {
-    console.error('POST chart-history error:', err)
-    return NextResponse.json({ ok: false }, { status: 500 })
+    console.error('POST chart-history error:', (err as Error)?.message ?? err)
+    return NextResponse.json({ ok: false }, { status: 503 })
   }
 }
 
-// DELETE endpoint to clear history. Supports clearing one type or both.
-//   DELETE /api/chart-history                → clears both
-//   DELETE /api/chart-history?type=price     → clears only price history
-//   DELETE /api/chart-history?type=backing   → clears only backing history
-//
-// Also supports scrubbing only out-of-bounds points (preserves valid history):
-//   DELETE /api/chart-history?mode=scrub
+// DELETE — admin only. Previously anyone on the internet could wipe the chart
+// history with a single request. Now it requires the header
+//   x-admin-key: <CHART_ADMIN_KEY>
+// matching a CHART_ADMIN_KEY environment variable in Vercel. If that variable
+// isn't set, DELETE is disabled entirely.
+//   DELETE /api/chart-history                 → clears current price + backing
+//   DELETE /api/chart-history?type=price      → current price series only
+//   DELETE /api/chart-history?type=backing    → backing only
+//   DELETE /api/chart-history?type=legacy     → old 1%-pool series
 export async function DELETE(req: Request) {
+  const adminKey = process.env.CHART_ADMIN_KEY
+  if (!adminKey || req.headers.get('x-admin-key') !== adminKey) {
+    return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
+  }
   try {
-    const url = new URL(req.url)
-    const type = url.searchParams.get('type')
-    const mode = url.searchParams.get('mode')
+    const type = new URL(req.url).searchParams.get('type')
+    const keys =
+      type === 'price' ? [PRICE_KEY]
+      : type === 'backing' ? [BACKING_KEY]
+      : type === 'legacy' ? [PRICE_KEY_LEGACY]
+      : [PRICE_KEY, BACKING_KEY]
     const redis = await getClient()
-
-    const keysToProcess: { key: string; type: 'price' | 'backing' }[] = []
-    if (!type || type === 'price') keysToProcess.push({ key: PRICE_KEY, type: 'price' })
-    if (!type || type === 'backing') keysToProcess.push({ key: BACKING_KEY, type: 'backing' })
-
-    const results: Record<string, { before: number; after: number }> = {}
-
-    for (const { key, type: t } of keysToProcess) {
-      if (mode === 'scrub') {
-        // Scrub mode: keep only valid points (absolute sanity bounds only)
-        const raw = await redis.get(key)
-        const history: { time: number; ratio: number }[] = raw ? JSON.parse(raw) : []
-        const before = history.length
-        const cleaned: { time: number; ratio: number }[] = []
-        for (const p of history) {
-          if (isAbsolutelyInsane(t, p.ratio)) continue
-          cleaned.push(p)
-        }
-        await redis.set(key, JSON.stringify(cleaned))
-        results[t] = { before, after: cleaned.length }
-      } else {
-        // Full delete
-        const raw = await redis.get(key)
-        const before = raw ? JSON.parse(raw).length : 0
-        await redis.del(key)
-        results[t] = { before, after: 0 }
-      }
-    }
-
-    return NextResponse.json({ ok: true, results })
+    for (const k of keys) await redis.del(k)
+    return NextResponse.json({ ok: true, cleared: keys })
   } catch (err) {
-    console.error('DELETE chart-history error:', err)
+    console.error('DELETE chart-history error:', (err as Error)?.message ?? err)
     return NextResponse.json({ ok: false }, { status: 500 })
   }
 }
