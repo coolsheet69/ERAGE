@@ -6,18 +6,21 @@ import { base } from 'wagmi/chains'
 import { injected, metaMask, coinbaseWallet } from 'wagmi/connectors'
 import { useState } from 'react'
 
+// Same data behavior as the production build that has been running for months:
+// no multicall batching, default React Query caching. The only change is that
+// base.llamarpc.com was removed — it blocks browser requests (CORS), so it could
+// never serve as a fallback from erage.app anyway.
 export const config = createConfig({
   chains: [base],
   connectors: [
     injected(),
     metaMask(),
-    coinbaseWallet({ appName: 'GGX Protocol' }),
+    coinbaseWallet({ appName: 'ERAGE Protocol' }),
   ],
   transports: {
     [base.id]: fallback([
-      http('https://base-rpc.publicnode.com'),  // primary — no rate limits
-      http('https://mainnet.base.org'),          // fallback 1
-      http('https://base.llamarpc.com'),         // fallback 2
+      http('https://base-rpc.publicnode.com'),  // primary
+      http('https://mainnet.base.org'),          // fallback
     ]),
   },
 })
