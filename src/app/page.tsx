@@ -49,8 +49,7 @@ const CONTRACTS = {
   ESHARE_LP: '0x0656CDF4539f412F542A8D8a029f7c6c5cE90d7B' as `0x${string}`,
   GGX_LP: '0xA1C0E4ee41F1Ab7113E78fb52BB67A06a16aAcAA' as `0x${string}`,        // ERAGE-ETH V3 1% pool — used as price feed (deeper, fewer spikes; arb bots keep it aligned with the 0.3% pool)
   GGX_LP_03: '0x4a3a2fB49D1dDe37E8903E99003F74c9e53af421' as `0x${string}`,     // ERAGE-ETH V3 0.3% pool — main trading pool, included in TVL
-  GGX_RAGE_LP: '0xE9704Fdc0f184ceD4218DFafF2A302A2D59a0265' as `0x${string}`,   // GGX-RAGE V3 1% side pool
-  GGX_ESHARE_LP: '0x1638378e4510FBf274a4a882c7765718359ac28A' as `0x${string}`, // GGX-ESHARE V3 1% side pool
+  // (Retired: GGX-RAGE side pool 0xE970…0265 and GGX-ESHARE side pool 0x1638…c28A — removed from TVL)
   WETH_USDC_LP: '0x6c561b446416e1a00e8e93e221854d6ea4171372' as `0x${string}`, // WETH/USDC Uniswap V3 on Base (correct pool)
   QUOTER_V2: '0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a' as `0x${string}`,   // Uniswap V3 QuoterV2 on Base (used by Optimized Zap for intelligent splits)
   ERAGE_RAGE_LP: '0x9e7C2Ce84346d57EdCE3f38A9e6585d4d0317F7d' as `0x${string}`,  // ERAGE-RAGE V3 1% pool
@@ -62,6 +61,8 @@ const CONTRACTS = {
   // PLAZM side is counted in TVL, priced off ERAGE via the pool's own spot price.
   TVL_POOL_A: '0x6c9f4c88192a8960ffa6457c8e47894ce1a7869a' as `0x${string}`,
   TVL_POOL_B: '0x0d95223e11b42f206230050ff8a12ff2eecde821' as `0x${string}`,
+  TVL_POOL_C: '0x8BfDB46DA5C58D7Ff5277fB378469e69437059b7' as `0x${string}`, // ERAGE-CHEWY V3 1%
+  CHEWY: '0xe1Ea7991432D1B7a1CB478fE433587A9dCA51e2E' as `0x${string}`,
   // HyperDriver ERAGE staking pool — ERAGE held here = ERAGE staked
   HYPERDRIVER_ERAGE_POOL: '0xcdAA6E0678a5d972C0E33f446D4A8C02b3e14505' as `0x${string}`,
 }
@@ -345,6 +346,29 @@ function CopyAddr({ address, color }: { address: string; color: string }) {
   )
 }
 
+// ============ PRICE EFFICIENCY SANITY ============
+// Valid range for a price-efficiency reading. Arbitrage keeps it near 1.0; values
+// outside this band only come from bad/missing reads and are never charted.
+const PRICE_EFF_MIN = 0.5
+const PRICE_EFF_MAX = 2.0
+
+// Drop one-off spikes: a point that's more than 15% away from the median of its
+// neighbours (5 either side) is treated as a glitch. Real moves persist across
+// several points, so they survive; single bad reads don't. Also cleans any bad
+// points already saved in the chart history.
+function removeSpikes(points: { time: number; ratio: number }[]) {
+  const inRange = points.filter((p) => isFinite(p.ratio) && p.ratio >= PRICE_EFF_MIN && p.ratio <= PRICE_EFF_MAX)
+  if (inRange.length < 5) return inRange
+  const W = 5
+  return inRange.filter((p, i) => {
+    const lo = Math.max(0, i - W)
+    const hi = Math.min(inRange.length, i + W + 1)
+    const window = inRange.slice(lo, hi).map((q) => q.ratio).sort((a, b) => a - b)
+    const median = window[Math.floor(window.length / 2)]
+    return Math.abs(p.ratio - median) / median <= 0.15
+  })
+}
+
 // ============ RATIO CHART COMPONENT ============
 type TimeRange = '4h' | '1d' | '1w'
 
@@ -380,7 +404,7 @@ function RatioChart({
     const cutoff = timeRange === '4h' ? now - 4 * 60 * 60 * 1000 
                  : timeRange === '1d' ? now - 24 * 60 * 60 * 1000 
                  : now - 7 * 24 * 60 * 60 * 1000
-    const filtered = priceEfficiencyHistory.filter(h => h.time >= cutoff)
+    const filtered = removeSpikes(priceEfficiencyHistory.filter(h => h.time >= cutoff))
     
     // Downsample for rendering performance — max ~400 points on the chart
     // Canvas can't resolve more than ~1 point per pixel anyway
@@ -875,6 +899,7 @@ const TOKEN_ACCENT: Record<string, string> = {
   [CONTRACTS.USDC.toLowerCase()]: '#3B82F6',
   [CONTRACTS.HESTIA.toLowerCase()]: '#F59E0B',
   [CONTRACTS.PLAZM.toLowerCase()]: '#22D3EE',
+  [CONTRACTS.CHEWY.toLowerCase()]: '#60A5FA',
 }
 
 function poolSnapshotToTvlItem(snap: PoolSnapshot, tokenUsd: Record<string, number>): TvlItem | null {
@@ -1684,10 +1709,11 @@ export default function Dashboard() {
   const { data: eshareT1 } = useReadContract({ address: CONTRACTS.ESHARE_LP, abi: PAIR_ABI, functionName: 'token1' })
   
   // LP Price Feeds - GGX (V3 Pool)
-  const { data: ggxSlot0 } = useReadContract({ address: CONTRACTS.GGX_LP, abi: PAIR_ABI, functionName: 'slot0', query: { refetchInterval: 20000 } })
-  const { data: ggxLiquidity } = useReadContract({ address: CONTRACTS.GGX_LP, abi: PAIR_ABI, functionName: 'liquidity' })
-  const { data: ggxT0 } = useReadContract({ address: CONTRACTS.GGX_LP, abi: PAIR_ABI, functionName: 'token0' })
-  const { data: ggxT1 } = useReadContract({ address: CONTRACTS.GGX_LP, abi: PAIR_ABI, functionName: 'token1' })
+  // ERAGE price feed: the 0.3% ERAGE-ETH pool (main trading pool, GGX_LP_03).
+  const { data: ggxSlot0 } = useReadContract({ address: CONTRACTS.GGX_LP_03, abi: PAIR_ABI, functionName: 'slot0', query: { refetchInterval: 20000 } })
+  const { data: ggxLiquidity } = useReadContract({ address: CONTRACTS.GGX_LP_03, abi: PAIR_ABI, functionName: 'liquidity' })
+  const { data: ggxT0 } = useReadContract({ address: CONTRACTS.GGX_LP_03, abi: PAIR_ABI, functionName: 'token0' })
+  const { data: ggxT1 } = useReadContract({ address: CONTRACTS.GGX_LP_03, abi: PAIR_ABI, functionName: 'token1' })
   
   // GGX-ETH V3 Pool balances (for TVL calculation and price)
   const { data: ggxPoolWethBal } = useReadContract({ 
@@ -1723,14 +1749,6 @@ export default function Dashboard() {
       refetchInterval: 20000
     }
   })
-
-  // GGX-RAGE side pool balances (for protocol TVL)
-  const { data: ggxRagePoolGgxBal } = useReadContract({ address: CONTRACTS.GGX, abi: ERC20_ABI, functionName: 'balanceOf', args: [CONTRACTS.GGX_RAGE_LP], query: { refetchInterval: 20000 } })
-  const { data: ggxRagePoolRageBal } = useReadContract({ address: CONTRACTS.RAGE, abi: ERC20_ABI, functionName: 'balanceOf', args: [CONTRACTS.GGX_RAGE_LP], query: { refetchInterval: 20000 } })
-
-  // GGX-ESHARE side pool balances (for protocol TVL)
-  const { data: ggxEsharePoolGgxBal } = useReadContract({ address: CONTRACTS.GGX, abi: ERC20_ABI, functionName: 'balanceOf', args: [CONTRACTS.GGX_ESHARE_LP], query: { refetchInterval: 20000 } })
-  const { data: ggxEsharePoolEshareBal } = useReadContract({ address: CONTRACTS.ESHARE, abi: ERC20_ABI, functionName: 'balanceOf', args: [CONTRACTS.GGX_ESHARE_LP], query: { refetchInterval: 20000 } })
 
   // ERAGE-RAGE V3 1% pool (0x9e7C...) — calculate RAGE side only for TVL
   const { data: erageRagePoolRageBal } = useReadContract({ address: CONTRACTS.RAGE, abi: ERC20_ABI, functionName: 'balanceOf', args: [CONTRACTS.ERAGE_RAGE_LP], query: { refetchInterval: 20000 } })
@@ -2291,22 +2309,14 @@ export default function Dashboard() {
       }
     }
 
-    // Method 2: Fallback to pool balances (NOT reliable for V3 — only used when
-    // sqrtPriceX96 is unavailable, e.g. during refetch gaps)
-    if (ggxPrice === 0) {
-      if (ggxPoolWethBal && ggxPoolGgxBal && ggxPoolWethBal > 0n && ggxPoolGgxBal > 0n) {
-        const wethInPool = parseFloat(formatUnits(ggxPoolWethBal, 18))
-        const ggxInPool = parseFloat(formatUnits(ggxPoolGgxBal, 18))
-        if (ggxInPool > 0 && wethInPool > 0) {
-          ggxPrice = wethInPool / ggxInPool  // ETH per GGX
-          ggxLpExists = true
-          ggxPair = 'ETH'
-        }
-      }
-    }
-    
+    // (Removed: the old fallback derived price from pool token balances. In a V3
+    // pool balances are NOT a price — that fallback produced the wild chart
+    // spikes (e.g. 100 instead of ~1.0) whenever slot0 briefly failed to load.
+    // No slot0 → no price → no chart point, which is the honest answer.)
+
     // ETH price in USD (from WETH/USDC V3 Pool) - CALCULATE FIRST for conversions
     let ethPriceUsd = 0
+    let ethPriceIsFallback = false
 
     // Method 1: Use sqrtPriceX96 from V3 slot0 (CORRECT for V3 pools)
     // V3 pools have concentrated liquidity, so pool balances don't accurately represent price
@@ -2350,13 +2360,14 @@ export default function Dashboard() {
 
     // Fallback: Use approximate ETH price if pool data unavailable
     if (ethPriceUsd === 0 || ethPriceUsd < 100 || ethPriceUsd > 10000) {
-      ethPriceUsd = 2400 // Approximate ETH price fallback
+      ethPriceUsd = 2400 // Approximate ETH price fallback (display only — never used for the chart)
+      ethPriceIsFallback = true
     }
     
     // GGX price in USD
     const ggxPriceUsd = ggxPrice * ethPriceUsd
     
-    return { ragePrice, ragePair, ragePriceInUsdc, esharePrice, esharePair, ggxPrice, ggxPair, ggxPriceUsd, ethPriceUsd, rageLpExists, eshareLpExists, ggxLpExists }
+    return { ethPriceIsFallback, ragePrice, ragePair, ragePriceInUsdc, esharePrice, esharePair, ggxPrice, ggxPair, ggxPriceUsd, ethPriceUsd, rageLpExists, eshareLpExists, ggxLpExists }
   }, [rageSlot0, rageLiquidity, rageT0, rageT1, eshareSlot0, eshareLiquidity, eshareT0, eshareT1, ggxSlot0, ggxLiquidity, ggxT0, ggxT1, ggxPoolWethBal, ggxPoolGgxBal, wethUsdcSlot0, wethUsdcT0, wethUsdcPoolWethBal, wethUsdcPoolUsdcBal])
   
   // Calculate GGX theoretical backing value in USD directly
@@ -2393,6 +2404,7 @@ export default function Dashboard() {
   const pricesReady = prices.ggxPrice > 0 && ggxBackingValueUsd > 0
   const tvlPoolA = usePoolSnapshot(CONTRACTS.TVL_POOL_A, pricesReady)
   const tvlPoolB = usePoolSnapshot(CONTRACTS.TVL_POOL_B, pricesReady)
+  const tvlPoolC = usePoolSnapshot(CONTRACTS.TVL_POOL_C, pricesReady) // ERAGE-CHEWY
 
   const tokenUsd = useMemo<Record<string, number>>(() => ({
     [CONTRACTS.WETH.toLowerCase()]: prices.ethPriceUsd,
@@ -2415,17 +2427,15 @@ export default function Dashboard() {
     add('backing-ra', 'RAGE Backing', '#EF4444', n(backingBalances?.[1]), 'RA', raUsd)
     add('erage-eth-1', 'ERAGE-ETH (V3 1%)', '#3B82F6', n(ggxPoolWethBal), 'ETH', ethUsd)
     add('erage-eth-03', 'ERAGE-ETH (V3 0.3%)', '#3B82F6', n(ggxPool03WethBal), 'ETH', ethUsd)
-    add('erage-rage-side', 'ERAGE-RAGE (side)', '#EF4444', n(ggxRagePoolRageBal), 'RA', raUsd)
-    add('erage-eshare-side', 'ERAGE-ESHARE (side)', '#8B5CF6', n(ggxEsharePoolEshareBal), 'ES', esUsd)
     add('erage-rage-1', 'ERAGE-RAGE (V3 1%)', '#EF4444', n(erageRagePoolRageBal), 'RA', raUsd)
     add('erage-eshare-1', 'ERAGE-ESHARE (V3 1%)', '#8B5CF6', n(erageEsharePoolEshareBal), 'ES', esUsd)
-    for (const snap of [tvlPoolA, tvlPoolB]) {
+    for (const snap of [tvlPoolA, tvlPoolB, tvlPoolC]) {
       const item = poolSnapshotToTvlItem(snap, tokenUsd)
       if (item) items.push(item)
     }
     const total = items.reduce((sum, it) => sum + (it.usd ?? 0), 0)
     return { items, total }
-  }, [tokenUsd, backingBalances, ggxPoolWethBal, ggxPool03WethBal, ggxRagePoolRageBal, ggxEsharePoolEshareBal, erageRagePoolRageBal, erageEsharePoolEshareBal, tvlPoolA, tvlPoolB])
+  }, [tokenUsd, backingBalances, ggxPoolWethBal, ggxPool03WethBal, erageRagePoolRageBal, erageEsharePoolEshareBal, tvlPoolA, tvlPoolB, tvlPoolC])
 
   // Dollar value of all ERAGE in existence: supply × Uniswap price
   // (falls back to backing price before the pool price has loaded)
@@ -2457,12 +2467,15 @@ export default function Dashboard() {
   // 0.3% pool's concentrated liquidity caused. Filters reverted accordingly.
   const priceEfficiencyRatio = useMemo(() => {
     if (prices.ggxPrice <= 0) return null
-    if (prices.ethPriceUsd <= 0) return null
+    if (prices.ethPriceUsd <= 0 || prices.ethPriceIsFallback) return null // never chart a guessed ETH price
     if (ggxBackingValueUsd <= 0) return null
 
     const ggxPriceUsd = prices.ggxPrice * prices.ethPriceUsd
-    return ggxPriceUsd / ggxBackingValueUsd
-  }, [prices.ggxPrice, prices.ethPriceUsd, ggxBackingValueUsd])
+    const ratio = ggxPriceUsd / ggxBackingValueUsd
+    // Arbitrage keeps this near 1.0; anything outside 0.5–2.0 is a bad read, not a market
+    if (!isFinite(ratio) || ratio < PRICE_EFF_MIN || ratio > PRICE_EFF_MAX) return null
+    return ratio
+  }, [prices.ggxPrice, prices.ethPriceUsd, prices.ethPriceIsFallback, ggxBackingValueUsd])
 
   // Track price efficiency history for the chart.
   // Recorded on every ratio change AND on a 2s heartbeat with the latest value, so the
