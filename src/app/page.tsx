@@ -1500,6 +1500,14 @@ function BouncingLogo({ className }: { className: string }) {
   )
 }
 
+// ============ BASE BUILDER CODE (ERC-8021) ============
+// Builder code bc_hp5ki6o0, encoded by base.dev as an ERC-8021 data suffix:
+//   [code bytes "bc_hp5ki6o0"][length 0x0b][schema 0x00][marker 0x8021 × 8]
+// It's appended to the calldata of every transaction this site sends, so Base can
+// attribute the activity to ERAGE. Contracts ignore trailing calldata, so this has
+// zero effect on what the transaction does; it costs ~16 gas per byte.
+const BUILDER_CODE_SUFFIX = '0x62635f6870356b69366f300b0080218021802180218021802180218021' as `0x${string}`
+
 // ============ HYPERDRIVER CTA ============
 const HYPERDRIVER_ERAGE_URL = 'https://www.hyperdriver.app/?pool=erage'
 
@@ -1826,7 +1834,11 @@ export default function Dashboard() {
   const { data: rageAllowZap } = useReadContract({ address: CONTRACTS.RAGE, abi: ERC20_ABI, functionName: 'allowance', args: address ? [address, CONTRACTS.GGXZap] : undefined, query: { enabled: !!address, refetchInterval: 10000 } })
   
   // Contract writes
-  const { writeContract, data: txHash, isPending, error: writeError } = useWriteContract()
+  const { writeContract: writeContractRaw, data: txHash, isPending, error: writeError } = useWriteContract()
+  // Every write on this page (mint, zap, redeem, approve, burn, admin) goes through
+  // this wrapper, which tags the transaction with the Base builder code.
+  const writeContract = ((variables: Parameters<typeof writeContractRaw>[0]) =>
+    writeContractRaw({ ...variables, dataSuffix: BUILDER_CODE_SUFFIX } as unknown as Parameters<typeof writeContractRaw>[0])) as typeof writeContractRaw
   const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({ hash: txHash })
   const queryClient = useQueryClient()
   
