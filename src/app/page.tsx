@@ -2011,26 +2011,26 @@ export default function Dashboard() {
     if (r >= GREEN_ZONE) {
       return {
         zone: 'green' as const, color: '#10B981', label: 'Green Zone', pctStr, pct,
-        title: 'Mint → Sell',
+        title: 'Mint → Sell' as React.ReactNode,
         body: `ERAGE trades ${pct.toFixed(1)}% above its mint cost on Uniswap. Mint here, then sell on Uniswap.` as React.ReactNode,
       }
     }
     if (r <= RED_ZONE) {
       return {
         zone: 'red' as const, color: '#EF4444', label: 'Red Zone', pctStr, pct,
-        title: 'Buy → Redeem',
+        title: 'Buy → Redeem' as React.ReactNode,
         body: `ERAGE trades ${Math.abs(pct).toFixed(1)}% below its backing on Uniswap. Buy there, then redeem here for ESHARE + RAGE.` as React.ReactNode,
       }
     }
     return {
       zone: 'blue' as const, color: '#3B82F6', label: 'Neutral Zone', pctStr, pct,
-      title: 'Mint or Buy or Hold',
-      body: (
+      title: (
         <>
-          No arbitrage edge right now — mint or buy to add, or hold and{' '}
-          <a href={HYPERDRIVER_ERAGE_URL} target="_blank" rel="noopener noreferrer" className="inline-link">stake</a>.
+          Mint or Buy or Hold{' '}
+          <a href={HYPERDRIVER_ERAGE_URL} target="_blank" rel="noopener noreferrer" className="title-link">or Stake</a>
         </>
       ) as React.ReactNode,
+      body: null as React.ReactNode,
     }
   }, [priceEfficiencyRatio])
 
@@ -2471,16 +2471,17 @@ export default function Dashboard() {
               <div className="relative pt-3 pb-1">
                 <div className="zone-bar">
                   {([
-                    { key: 'red', label: 'Buy → Redeem', lo: GAUGE_MIN, hi: RED_ZONE, bg: 'linear-gradient(90deg, #7f1d1d, #EF4444)' },
-                    { key: 'blue', label: 'Neutral', lo: RED_ZONE, hi: GREEN_ZONE, bg: 'linear-gradient(90deg, #1e3a8a, #3B82F6, #1e3a8a)' },
-                    { key: 'green', label: 'Mint → Sell', lo: GREEN_ZONE, hi: GAUGE_MAX, bg: 'linear-gradient(90deg, #10B981, #065f46)' },
+                    { key: 'red', short: 'Redeem', label: 'Buy → Redeem', lo: GAUGE_MIN, hi: RED_ZONE, bg: 'linear-gradient(90deg, #7f1d1d, #EF4444)' },
+                    { key: 'blue', short: 'Neutral', label: 'Neutral', lo: RED_ZONE, hi: GREEN_ZONE, bg: 'linear-gradient(90deg, #1e3a8a, #3B82F6, #1e3a8a)' },
+                    { key: 'green', short: 'Mint', label: 'Mint → Sell', lo: GREEN_ZONE, hi: GAUGE_MAX, bg: 'linear-gradient(90deg, #10B981, #065f46)' },
                   ] as const).map((z) => (
                     <div
                       key={z.key}
                       className={`zone-seg ${signal?.zone === z.key ? 'is-active' : ''}`}
                       style={{ width: `${((z.hi - z.lo) / (GAUGE_MAX - GAUGE_MIN)) * 100}%`, background: z.bg }}
                     >
-                      <span>{z.label}</span>
+                      <span className="sm:hidden">{z.short}</span>
+                      <span className="hidden sm:inline">{z.label}</span>
                     </div>
                   ))}
                 </div>
@@ -2504,7 +2505,7 @@ export default function Dashboard() {
                       {signal.label} · <span className={signal.pct >= 0 ? 'text-[#10B981]' : 'text-[#EF4444]'}>{signal.pctStr}</span>
                     </p>
                     <p className="signal-title font-black tracking-tight leading-tight">{signal.title}</p>
-                    <p className="text-[11px] text-gray-400 leading-snug mt-0.5">{signal.body}</p>
+                    {signal.body && <p className="text-[11px] text-gray-400 leading-snug mt-0.5">{signal.body}</p>}
                     {signal.zone === 'green' && (
                       <div className="flex flex-wrap gap-2 mt-2">
                         <button onClick={() => selectMode('ETH')} className="px-3 py-1.5 rounded-lg text-xs font-semibold btn-primary">Mint ERAGE</button>
@@ -2705,7 +2706,7 @@ export default function Dashboard() {
                                     role="tab"
                                     aria-selected={isActive}
                                     onClick={() => { setInputToken(m.id); setInputAmount(''); setEshareInput(''); setRageInput(''); }}
-                                    className={`mode-tab relative z-10 w-full py-2.5 rounded-lg text-[13px] font-bold transition-colors flex items-center justify-center gap-1.5 ${
+                                    className={`mode-tab relative z-10 w-full py-2.5 px-1 rounded-lg text-[12px] sm:text-[13px] font-bold whitespace-nowrap transition-colors flex items-center justify-center gap-1 sm:gap-1.5 ${
                                       isActive ? 'is-active text-white border border-transparent' : 'bg-white/5 text-gray-400 hover:text-white border border-white/10'
                                     }`}
                                     style={{ ['--c' as string]: m.color } as React.CSSProperties}
@@ -2718,7 +2719,12 @@ export default function Dashboard() {
                                       </span>
                                     )}
                                     {m.id === 'GGX' && <img src="/ERAGE-logo.webp" className="w-4 h-4 rounded object-cover" alt="" />}
-                                    {m.label}
+                                    {m.id === 'ESHARE_RAGE' ? (
+                                      <>
+                                        <span className="sm:hidden">ES+RA</span>
+                                        <span className="hidden sm:inline">ESHARE + RAGE</span>
+                                      </>
+                                    ) : m.label}
                                   </button>
                                 )
                               })}

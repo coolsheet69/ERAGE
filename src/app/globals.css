@@ -1181,6 +1181,24 @@
   text-decoration-color: currentColor;
 }
 
+/* "or Stake" link inside the big recommendation title (title uses gradient text,
+   so the link needs its own solid fill) */
+.title-link {
+  -webkit-text-fill-color: #56E3FF;
+  color: #56E3FF;
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-decoration-color: rgba(86, 227, 255, 0.45);
+  text-underline-offset: 4px;
+  text-shadow: 0 0 14px rgba(86, 227, 255, 0.45);
+  transition: text-decoration-color 0.2s ease;
+}
+
+.title-link:hover {
+  -webkit-text-fill-color: #B8F4FF;
+  text-decoration-color: currentColor;
+}
+
 /* ============ SWAP + FORGE CARD ============ */
 
 @property --swap-angle {
@@ -1507,4 +1525,43 @@ input[type="number"] {
 .tab-hidden *::before,
 .tab-hidden *::after {
   animation-play-state: paused !important;
+}
+
+
+/* ============ PHONES / TABLETS: smoother scrolling ============ */
+/* Continuous decorative animations (rotating gradient edges, light sweeps, the
+   drifting background, the scrolling floor grid, glow pulses on filters) force
+   the browser to repaint large areas every frame. Desktop GPUs shrug that off;
+   phones drop frames while scrolling. On touch / narrow screens they're turned
+   off. Functional motion stays: rolling numbers, the needle, tab slide, babies. */
+@media (max-width: 1023px), (hover: none) {
+  .bg-aurora,
+  .signal-card::before,
+  .signal-sheen,
+  .swap-card::before,
+  .forge-card::before,
+  .forge-receipt::after,
+  .forge-cta::after,
+  .mode-tab.is-active::after,
+  .zone-seg.is-active::after,
+  .arena-grid,
+  .stake-fill,
+  .chip-up,
+  .chip-up::after,
+  .hd-cta,
+  .logo-breathe,
+  .animate-pulse-glow,
+  .tile::before {
+    animation: none !important;
+  }
+
+  /* Static versions of the glows that were animated */
+  .logo-breathe { filter: drop-shadow(0 0 14px rgba(255, 107, 53, 0.45)); }
+  .signal-card::before { --sig-angle: 40deg; }
+  .swap-card::before { --swap-angle: 40deg; }
+
+  /* Keep each card's painting self-contained */
+  .signal-card, .tile, .forge-card, .swap-card { contain: paint; }
+
+  .zone-seg span { letter-spacing: 0.08em; font-size: 9.5px; }
 }
