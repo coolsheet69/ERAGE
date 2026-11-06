@@ -137,9 +137,8 @@
   position: fixed;
   inset: 0;
   pointer-events: none;
-  opacity: 0.07;
+  opacity: 0.05;
   z-index: 1;
-  mix-blend-mode: multiply;
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' fill='black'/%3E%3C/svg%3E");
   background-repeat: repeat;
   background-size: 256px 256px;
@@ -158,8 +157,6 @@
 /* Card container */
 .card {
   background: rgba(20, 20, 22, 0.75);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
   border: 1px solid rgba(255, 255, 255, 0.06);
   transition: border-color 0.3s ease, background 0.3s ease;
 }
@@ -172,8 +169,6 @@
 /* Stat card */
 .stat-card {
   background: rgba(20, 20, 22, 0.7);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
   border: 1px solid rgba(255, 255, 255, 0.06);
   transition: all 0.3s ease;
   position: relative;
@@ -336,7 +331,6 @@
     radial-gradient(40% 35% at 15% 30%, rgba(255, 107, 53, 0.10), transparent 70%),
     radial-gradient(35% 40% at 85% 20%, rgba(139, 92, 246, 0.08), transparent 70%),
     radial-gradient(45% 35% at 60% 90%, rgba(239, 68, 68, 0.06), transparent 70%);
-  filter: blur(20px);
   animation: aurora-drift 48s ease-in-out infinite alternate;
 }
 
@@ -369,7 +363,6 @@
   display: flex;
   flex-direction: column;
   transition: transform 1.1s cubic-bezier(0.16, 1, 0.3, 1);
-  will-change: transform;
 }
 
 .ratchet-strip > span,
@@ -512,7 +505,6 @@
 .logo-breathe {
   display: inline-block;
   animation: logo-breathe 4.5s ease-in-out infinite;
-  will-change: transform, filter;
 }
 
 @keyframes logo-breathe {
@@ -524,6 +516,827 @@
     transform: scale(1.05);
     filter: drop-shadow(0 0 20px rgba(255, 107, 53, 0.65)) drop-shadow(0 0 46px rgba(255, 215, 0, 0.25));
   }
+}
+
+/* ============ ARBITRAGE SIGNAL ============ */
+
+@property --sig-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+/* Hero card, tinted by the live zone colour (--zone: green / blue / red) */
+.signal-card {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background:
+    radial-gradient(90% 160% at 0% 50%, color-mix(in srgb, var(--zone) 30%, transparent), transparent 60%),
+    radial-gradient(60% 120% at 100% 0%, color-mix(in srgb, var(--zone) 14%, transparent), transparent 70%),
+    rgba(12, 12, 14, 0.88);
+  box-shadow: 0 0 60px -18px color-mix(in srgb, var(--zone) 75%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transition: box-shadow 0.8s ease, background 0.8s ease;
+}
+
+/* Rotating zone-coloured edge */
+.signal-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(from var(--sig-angle),
+    transparent 0deg, var(--zone) 50deg, #fff 70deg, var(--zone) 90deg, transparent 160deg,
+    transparent 200deg, color-mix(in srgb, var(--zone) 60%, transparent) 260deg, transparent 320deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: sig-spin 7s linear infinite;
+  pointer-events: none;
+  z-index: 1;
+}
+
+@keyframes sig-spin { to { --sig-angle: 360deg; } }
+
+/* Light sweep across the card every few seconds */
+.signal-sheen {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, 0.07) 48%, transparent 60%);
+  background-size: 250% 100%;
+  animation: sig-sheen 6s ease-in-out infinite;
+  z-index: 0;
+}
+
+@keyframes sig-sheen {
+  0%, 55% { background-position: 130% 0; }
+  100% { background-position: -130% 0; }
+}
+
+.signal-number {
+  font-size: clamp(2.6rem, 4.6vw, 3.6rem);
+  color: var(--zone);
+  text-shadow: 0 0 18px color-mix(in srgb, var(--zone) 70%, transparent), 0 0 48px color-mix(in srgb, var(--zone) 35%, transparent);
+  transition: color 0.6s ease;
+}
+
+.signal-title {
+  font-size: clamp(1.4rem, 2.2vw, 1.85rem);
+  background: linear-gradient(90deg, #fff, color-mix(in srgb, var(--zone) 70%, #fff));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* The zone bar: three labelled segments, the active one lit up */
+.zone-bar {
+  display: flex;
+  height: 2.25rem;
+  border-radius: 9999px;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08), 0 6px 20px -8px rgba(0, 0, 0, 0.8);
+}
+
+.zone-seg {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.32;
+  filter: saturate(0.7);
+  transition: opacity 0.6s ease, filter 0.6s ease;
+}
+
+.zone-seg + .zone-seg { border-left: 1px solid rgba(0, 0, 0, 0.45); }
+
+.zone-seg span {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.9);
+  white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+.zone-seg.is-active {
+  opacity: 1;
+  filter: saturate(1.15) brightness(1.1);
+}
+
+.zone-seg.is-active::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.28), transparent);
+  background-size: 200% 100%;
+  animation: seg-shine 2.4s linear infinite;
+}
+
+@keyframes seg-shine {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+/* Needle: a glowing marker that glides to each new reading */
+.gauge-needle {
+  position: absolute;
+  top: 0.3rem;
+  width: 4px;
+  height: 2.95rem;
+  margin-left: -2px;
+  border-radius: 3px;
+  background: #fff;
+  box-shadow: 0 0 12px #fff, 0 0 24px var(--zone), 0 0 2px #000;
+  transition: left 1s cubic-bezier(0.22, 1, 0.36, 1);
+  z-index: 2;
+}
+
+.gauge-needle::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -7px;
+  width: 12px;
+  height: 12px;
+  transform: translateX(-50%) rotate(45deg);
+  background: #fff;
+  border-radius: 2px;
+  box-shadow: 0 0 10px var(--zone);
+}
+
+.gauge-needle::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 26px;
+  height: 26px;
+  margin: -13px 0 0 -13px;
+  border-radius: 9999px;
+  border: 2px solid var(--zone);
+  animation: needle-ping 1.8s ease-out infinite;
+}
+
+@keyframes needle-ping {
+  0% { transform: scale(0.4); opacity: 0.9; }
+  100% { transform: scale(1.8); opacity: 0; }
+}
+
+/* Three stat "pods" along the bottom of the Price Efficiency card */
+.signal-pods {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.5rem;
+}
+
+@media (min-width: 768px) {
+  .signal-pods { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+.pod {
+  position: relative;
+  border-radius: 0.8rem;
+  padding: 0.55rem 0.7rem;
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.05), rgba(0, 0, 0, 0.25));
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  transition: border-color 0.3s ease;
+}
+
+.pod:hover { border-color: color-mix(in srgb, var(--zone) 45%, transparent); }
+
+.pod-label {
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: color-mix(in srgb, var(--zone) 40%, #e5e7eb);
+}
+
+/* The +/- % badge between Uniswap and Backing prices */
+.pod-vs {
+  align-self: center;
+  color: #9CA3AF;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--zone) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--zone) 40%, transparent);
+  white-space: nowrap;
+}
+
+.pod-vs.is-up {
+  color: #10B981;
+  background: rgba(16, 185, 129, 0.12);
+  border-color: rgba(16, 185, 129, 0.45);
+}
+
+.pod-vs.is-down {
+  color: #EF4444;
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.45);
+}
+
+.pod-label-strong {
+  font-size: 12.5px;
+  color: #fff;
+  text-shadow: 0 0 10px rgba(16, 185, 129, 0.55);
+}
+
+/* Inset panels inside the Protocol Stats card */
+.stat-well {
+  border-radius: 0.7rem;
+  padding: 0.45rem 0.6rem;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.stat-well-fire {
+  background: linear-gradient(180deg, rgba(249, 115, 22, 0.08), rgba(0, 0, 0, 0.25));
+  border-color: rgba(249, 115, 22, 0.18);
+}
+
+.hd-logo {
+  box-shadow: 0 0 10px rgba(94, 234, 255, 0.45);
+}
+
+.hd-pct {
+  text-shadow: 0 0 12px rgba(86, 227, 255, 0.55);
+}
+
+.tvl-glow {
+  text-shadow: 0 0 18px rgba(255, 215, 0, 0.35);
+}
+
+/* ============ STAT CARDS ============ */
+
+.tile {
+  --mx: 50%;
+  --my: 0%;
+  position: relative;
+  overflow: hidden;
+  border-radius: 1rem;
+  padding: 0.75rem;
+  background:
+    linear-gradient(160deg, color-mix(in srgb, var(--tile) 16%, transparent), transparent 55%),
+    rgba(18, 18, 20, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  transition: border-color 0.3s ease, transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+/* Cursor spotlight */
+.tile::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(220px circle at var(--mx) var(--my), color-mix(in srgb, var(--tile) 22%, transparent), transparent 70%);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.tile:hover::before { opacity: 1; }
+
+.tile:hover {
+  border-color: color-mix(in srgb, var(--tile) 45%, transparent);
+  box-shadow: 0 10px 30px -14px color-mix(in srgb, var(--tile) 60%, transparent);
+  transform: translateY(-1px);
+}
+
+.tile > * { position: relative; }
+
+.tile-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 13px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  background: linear-gradient(90deg, #fff, color-mix(in srgb, var(--tile) 80%, #fff));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--tile) 45%, transparent));
+}
+
+/* Small glowing accent bar before each card title */
+.tile-label::before {
+  content: '';
+  width: 3px;
+  height: 0.95em;
+  border-radius: 2px;
+  background: var(--tile);
+  box-shadow: 0 0 8px var(--tile);
+}
+
+/* Section labels inside a card (Supply, Burnt forever) */
+.sub-label {
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: color-mix(in srgb, var(--tile) 45%, #e5e7eb);
+}
+
+.sub-label-fire {
+  color: #FDBA74;
+  text-shadow: 0 0 10px rgba(249, 115, 22, 0.55);
+}
+
+.tile-chip {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 1px 7px;
+  border-radius: 9999px;
+  color: var(--tile);
+  background: color-mix(in srgb, var(--tile) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--tile) 35%, transparent);
+}
+
+.stake-fill {
+  background: linear-gradient(90deg, #1D4ED8, #3B82F6, #56E3FF, #3B82F6, #1D4ED8);
+  box-shadow: 0 0 10px rgba(86, 227, 255, 0.55);
+  background-size: 200% 100%;
+  animation: stake-flow 3s linear infinite;
+  transition: width 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes stake-flow {
+  from { background-position: 0% 0; }
+  to { background-position: 200% 0; }
+}
+
+.flame-flicker { animation: flame 1.6s ease-in-out infinite; transform-origin: 50% 100%; }
+
+@keyframes flame {
+  0%, 100% { transform: scale(1) rotate(0deg); opacity: 1; }
+  30% { transform: scale(1.12, 0.94) rotate(-4deg); opacity: 0.85; }
+  60% { transform: scale(0.94, 1.1) rotate(3deg); opacity: 1; }
+}
+
+/* ============ MINT / REDEEM CARD ("forge") ============ */
+/* --mode is set inline from the selected tab: ETH orange, ESHARE+RAGE purple, Redeem blue */
+
+@property --forge-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.forge-card {
+  isolation: isolate;
+  background:
+    radial-gradient(120% 70% at 50% -10%, color-mix(in srgb, var(--mode) 22%, transparent), transparent 60%),
+    radial-gradient(80% 60% at 100% 100%, color-mix(in srgb, var(--mode) 10%, transparent), transparent 70%),
+    rgba(16, 16, 18, 0.86);
+  border: 1px solid color-mix(in srgb, var(--mode) 28%, rgba(255, 255, 255, 0.06));
+  box-shadow: 0 18px 50px -24px color-mix(in srgb, var(--mode) 70%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  transition: border-color 0.5s ease, box-shadow 0.5s ease, background 0.5s ease;
+}
+
+/* Glowing top edge in the mode colour that drifts left↔right */
+.forge-card::before {
+  content: '';
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  top: -1px;
+  height: 2px;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, transparent, var(--mode), #fff, var(--mode), transparent);
+  background-size: 200% 100%;
+  animation: forge-edge 4s ease-in-out infinite alternate;
+  box-shadow: 0 0 14px var(--mode);
+  pointer-events: none;
+}
+
+@keyframes forge-edge {
+  from { background-position: 0% 0; }
+  to { background-position: 100% 0; }
+}
+
+/* Mint / Mint / Redeem group labels above the tabs */
+.mode-group {
+  text-align: center;
+  font-size: 13px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: color-mix(in srgb, var(--g) 55%, #6b7280);
+  transition: color 0.3s ease, text-shadow 0.3s ease, transform 0.3s ease;
+}
+
+.mode-group.is-active {
+  color: var(--g);
+  text-shadow: 0 0 12px color-mix(in srgb, var(--g) 70%, transparent);
+  transform: translateY(-1px);
+}
+
+/* Tab buttons */
+.mode-tab {
+  overflow: hidden;
+}
+
+.mode-tab:not(.is-active):hover {
+  border-color: color-mix(in srgb, var(--c) 55%, transparent) !important;
+  box-shadow: 0 0 14px -4px var(--c);
+  color: #fff;
+}
+
+/* Light sweep across the selected tab */
+.mode-tab.is-active::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 40%;
+  left: -50%;
+  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+  transform: skewX(-20deg);
+  animation: cta-sweep 3.6s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* Input fields: glow in the mode colour while typing */
+.forge-field {
+  transition: border-color 0.25s ease, box-shadow 0.25s ease, background-color 0.25s ease;
+}
+
+.forge-field:focus-within {
+  border-color: color-mix(in srgb, var(--mode) 70%, transparent) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mode) 18%, transparent), 0 0 22px -6px var(--mode);
+}
+
+.forge-field input {
+  caret-color: var(--mode);
+}
+
+/* Animated flow chevrons between "you pay" and "you receive" */
+.forge-flow {
+  display: flex;
+  justify-content: center;
+  gap: 3px;
+  height: 10px;
+  margin: 2px 0;
+}
+
+.forge-flow span {
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--mode);
+  border-bottom: 2px solid var(--mode);
+  transform: rotate(45deg);
+  opacity: 0.2;
+  animation: forge-flow 1.4s ease-in-out infinite;
+}
+
+.forge-flow span:nth-child(2) { animation-delay: 0.15s; }
+.forge-flow span:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes forge-flow {
+  0%, 100% { opacity: 0.15; transform: rotate(45deg) translate(-1px, -1px); }
+  50% { opacity: 1; transform: rotate(45deg) translate(1px, 1px); }
+}
+
+/* Single, subtle chevron above "You receive" */
+.forge-flow-single {
+  height: 12px;
+  margin: 4px 0 2px;
+}
+
+.forge-flow-single span {
+  width: 9px;
+  height: 9px;
+  animation: forge-flow-soft 2.2s ease-in-out infinite;
+}
+
+@keyframes forge-flow-soft {
+  0%, 100% { opacity: 0.35; transform: rotate(45deg) translate(-0.5px, -0.5px); }
+  50% { opacity: 0.75; transform: rotate(45deg) translate(0.75px, 0.75px); }
+}
+
+/* "You receive" box: a lit receipt */
+.forge-receipt {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--mode) 12%, rgba(20, 20, 22, 0.9)), rgba(20, 20, 22, 0.9));
+  border: 1px solid color-mix(in srgb, var(--mode) 30%, transparent);
+}
+
+.forge-receipt::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 40%, rgba(255, 255, 255, 0.08) 50%, transparent 60%);
+  background-size: 250% 100%;
+  animation: sig-sheen 5s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* Main action button: periodic light sweep + lift */
+.forge-cta {
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.15s ease, box-shadow 0.25s ease, filter 0.2s ease;
+}
+
+.forge-cta:not(:disabled) {
+  box-shadow: 0 8px 26px -10px var(--mode);
+}
+
+.forge-cta:not(:disabled):hover {
+  filter: brightness(1.1);
+  box-shadow: 0 10px 32px -8px var(--mode);
+}
+
+.forge-cta:not(:disabled):active { transform: scale(0.985); }
+
+.forge-cta:not(:disabled)::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 35%;
+  left: -50%;
+  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+  transform: skewX(-20deg);
+  animation: cta-sweep 3.2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes cta-sweep {
+  0%, 60% { left: -50%; }
+  100% { left: 130%; }
+}
+
+/* Small step labels in the mint card ("You pay") */
+.forge-step {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: color-mix(in srgb, var(--mode) 55%, #9ca3af);
+}
+
+/* "Your Wallet" panel — visually separate from the transaction above it */
+.wallet-panel {
+  position: relative;
+  border-radius: 0.9rem;
+  padding: 0.6rem 0.6rem 0.65rem;
+  background:
+    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.018) 0 8px, transparent 8px 16px),
+    rgba(8, 8, 10, 0.55);
+  border: 1px dashed rgba(255, 255, 255, 0.14);
+}
+
+.wallet-panel-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: #e5e7eb;
+}
+
+/* Wallet balance boxes */
+.wallet-box {
+  position: relative;
+  border-radius: 0.6rem;
+  padding: 0.45rem 0.5rem;
+  background: linear-gradient(160deg, color-mix(in srgb, var(--tok) 14%, transparent), rgba(20, 20, 22, 0.9) 70%);
+  border: 1px solid color-mix(in srgb, var(--tok) 22%, transparent);
+  transition: border-color 0.25s ease, transform 0.25s ease, box-shadow 0.25s ease;
+}
+
+.wallet-box:hover {
+  border-color: color-mix(in srgb, var(--tok) 55%, transparent);
+  box-shadow: 0 6px 18px -10px var(--tok);
+  transform: translateY(-1px);
+}
+
+/* "only goes up" chip: arrow keeps ratcheting upward, chip glows and shines */
+.chip-up {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  animation: chip-glow 2.4s ease-in-out infinite;
+}
+
+.chip-up::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 35%, rgba(255, 255, 255, 0.45) 50%, transparent 65%);
+  background-size: 250% 100%;
+  animation: chip-shine 3s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.chip-arrow {
+  display: inline-block;
+  font-size: 8px;
+  line-height: 1;
+  animation: chip-ratchet 1.2s steps(1, end) infinite;
+}
+
+/* Clicks up in two steps, then resets — like a ratchet */
+@keyframes chip-ratchet {
+  0% { transform: translateY(2px); opacity: 0.6; }
+  33% { transform: translateY(0); opacity: 0.85; }
+  66% { transform: translateY(-2px); opacity: 1; }
+}
+
+@keyframes chip-glow {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--tile) 0%, transparent); }
+  50% { box-shadow: 0 0 12px 0 color-mix(in srgb, var(--tile) 55%, transparent); }
+}
+
+@keyframes chip-shine {
+  0%, 50% { background-position: 150% 0; }
+  100% { background-position: -150% 0; }
+}
+
+/* ============ INLINE LINKS ============ */
+.inline-link {
+  color: #56E3FF; /* HyperDriver logo cyan */
+  text-decoration: underline;
+  text-decoration-color: rgba(86, 227, 255, 0.45);
+  text-underline-offset: 2px;
+  transition: color 0.2s ease, text-decoration-color 0.2s ease;
+}
+
+.inline-link:hover {
+  color: #B8F4FF;
+  text-decoration-color: currentColor;
+}
+
+/* ============ SWAP + FORGE CARD ============ */
+
+@property --swap-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.swap-card {
+  position: relative;
+  isolation: isolate;
+  background:
+    radial-gradient(70% 60% at 85% 10%, rgba(255, 107, 53, 0.14), transparent 70%),
+    radial-gradient(60% 50% at 10% 100%, rgba(168, 85, 247, 0.12), transparent 70%),
+    rgba(16, 16, 18, 0.86);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 0 18px 50px -26px rgba(255, 107, 53, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+/* Slow rotating orange→purple edge */
+.swap-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(from var(--swap-angle), transparent 0deg, rgba(255, 107, 53, 0.8) 60deg, transparent 140deg, transparent 200deg, rgba(168, 85, 247, 0.7) 260deg, transparent 340deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: swap-spin 10s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes swap-spin { to { --swap-angle: 360deg; } }
+
+/* The swap widget sits in a framed "screen" */
+.swap-frame {
+  border-radius: 12px;
+  box-shadow: 0 0 0 1px rgba(255, 107, 53, 0.18), 0 10px 30px -18px rgba(0, 0, 0, 0.9);
+}
+
+.arena-title {
+  background: linear-gradient(90deg, #FF6B35, #FFD700, #A855F7, #FF6B35);
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: arena-title 6s linear infinite;
+}
+
+@keyframes arena-title {
+  from { background-position: 0% 0; }
+  to { background-position: 300% 0; }
+}
+
+/* The logo's play area: a lit stage with a glowing floor */
+.arena {
+  isolation: isolate;
+  background:
+    radial-gradient(60% 40% at 50% 18%, rgba(255, 107, 53, 0.22), transparent 70%),
+    linear-gradient(180deg, rgba(20, 14, 26, 0.6), rgba(10, 10, 12, 0.85));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05), inset 0 -30px 40px -30px rgba(168, 85, 247, 0.5);
+}
+
+/* Faint perspective grid on the floor (behind the logo and babies) */
+.arena-grid {
+  position: absolute;
+  left: -30%;
+  right: -30%;
+  bottom: 0;
+  height: 45%;
+  z-index: -1;
+  background-image:
+    linear-gradient(rgba(168, 85, 247, 0.22) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(168, 85, 247, 0.22) 1px, transparent 1px);
+  background-size: 22px 22px;
+  transform: perspective(220px) rotateX(58deg);
+  transform-origin: bottom;
+  mask-image: linear-gradient(to top, #000 10%, transparent 90%);
+  -webkit-mask-image: linear-gradient(to top, #000 10%, transparent 90%);
+  animation: arena-grid 3s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes arena-grid {
+  from { background-position: 0 0, 0 0; }
+  to { background-position: 0 22px, 0 0; }
+}
+
+/* Glowing floor line where the babies land */
+.arena-floor {
+  position: absolute;
+  left: 6%;
+  right: 6%;
+  bottom: 0;
+  height: 2px;
+  z-index: -1;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, transparent, #A855F7, #FF6B35, #A855F7, transparent);
+  box-shadow: 0 0 16px rgba(168, 85, 247, 0.9), 0 0 4px #FF6B35;
+  pointer-events: none;
+}
+
+.arena-hint {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 10px;
+  z-index: -1;
+  text-align: center;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.35);
+  pointer-events: none;
+  animation: arena-hint 3s ease-in-out infinite;
+}
+
+@keyframes arena-hint {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 0.8; }
+}
+
+/* Merch link at the bottom of the mint/redeem card */
+.merch-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.85rem;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #FFD7C2;
+  background: linear-gradient(135deg, rgba(255, 107, 53, 0.14), rgba(168, 85, 247, 0.12));
+  border: 1px solid rgba(255, 107, 53, 0.3);
+  transition: color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.merch-link:hover {
+  color: #fff;
+  border-color: rgba(255, 107, 53, 0.65);
+  box-shadow: 0 0 18px -4px rgba(255, 107, 53, 0.7);
+}
+
+/* ============ PAGE ENTRANCE ============ */
+/* Sections rise in one after another on load (delay via --rise-delay) */
+.rise {
+  animation: rise-in 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: var(--rise-delay, 0ms);
+}
+
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(14px) scale(0.99); }
+  to { opacity: 1; transform: none; }
 }
 
 /* ============ HYPERDRIVER CTA ============ */
@@ -563,8 +1376,6 @@
   padding: 0.4rem 0.9rem;
   font-size: 0.8rem;
   background: linear-gradient(135deg, rgba(255, 107, 53, 0.28), rgba(20, 12, 28, 0.94) 55%, rgba(168, 85, 247, 0.28));
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
 }
 
 .hd-bolt {
@@ -616,13 +1427,35 @@ a:focus-visible {
   .gradient-text-animated,
   .tx-live::after,
   .ratchet-rising::after,
+  .signal-card::before,
+  .signal-sheen,
+  .zone-seg.is-active::after,
+  .gauge-needle::after,
+  .stake-fill,
+  .flame-flicker,
+  .forge-card::before,
+  .chip-up,
+  .chip-up::after,
+  .chip-arrow,
+  .swap-card::before,
+  .arena-title,
+  .arena-grid,
+  .arena-hint,
+  .forge-flow span,
+  .forge-receipt::after,
+  .forge-cta::after,
+  .mode-tab.is-active::after,
+  .rise,
   .logo-breathe,
   .hd-cta,
   .hd-bolt {
     animation: none !important;
   }
   .ratchet-strip,
-  .mode-indicator {
+  .mode-indicator,
+  .gauge-needle,
+  .signal-card,
+  .tile {
     transition: none !important;
   }
   .btn-primary::after {
@@ -664,4 +1497,14 @@ input[type="number"]::-webkit-outer-spin-button {
 input[type="number"] {
   -moz-appearance: textfield;
   appearance: textfield;
+}
+
+
+/* ============ PERFORMANCE ============ */
+/* When the tab is in the background, freeze all CSS animations (page.tsx toggles
+   .tab-hidden on <html>). Saves CPU/GPU and memory churn while you're not looking. */
+.tab-hidden *,
+.tab-hidden *::before,
+.tab-hidden *::after {
+  animation-play-state: paused !important;
 }

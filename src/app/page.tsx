@@ -24,7 +24,7 @@ import {
   TrendingUp, Wallet, Zap, ArrowUpRight, Flame, 
   RefreshCw, Settings, Shield, AlertTriangle, Pause, Play,
   Trash2, DollarSign, MessageCircle, FileText, Copy, Check,
-  LogOut, X
+  LogOut, X, Shirt
 } from 'lucide-react'
 
 // ============ LEGACY BURNT VALUES (v1 + v2 + v3 + v4 contracts) ============
@@ -348,483 +348,16 @@ function CopyAddr({ address, color }: { address: string; color: string }) {
 
 // ============ PRICE EFFICIENCY SANITY ============
 // Valid range for a price-efficiency reading. Arbitrage keeps it near 1.0; values
-// outside this band only come from bad/missing reads and are never charted.
+// outside this band only come from bad/missing reads and are ignored.
 const PRICE_EFF_MIN = 0.5
 const PRICE_EFF_MAX = 2.0
 
-// Drop one-off spikes: a point that's more than 15% away from the median of its
-// neighbours (5 either side) is treated as a glitch. Real moves persist across
-// several points, so they survive; single bad reads don't. Also cleans any bad
-// points already saved in the chart history.
-function removeSpikes(points: { time: number; ratio: number }[]) {
-  const inRange = points.filter((p) => isFinite(p.ratio) && p.ratio >= PRICE_EFF_MIN && p.ratio <= PRICE_EFF_MAX)
-  if (inRange.length < 5) return inRange
-  const W = 5
-  return inRange.filter((p, i) => {
-    const lo = Math.max(0, i - W)
-    const hi = Math.min(inRange.length, i + W + 1)
-    const window = inRange.slice(lo, hi).map((q) => q.ratio).sort((a, b) => a - b)
-    const median = window[Math.floor(window.length / 2)]
-    return Math.abs(p.ratio - median) / median <= 0.15
-  })
-}
-
-// ============ RATIO CHART COMPONENT ============
-type TimeRange = '4h' | '1d' | '1w'
-
-function RatioChart({ 
-  history, 
-  priceEfficiencyHistory,
-  timeRange,
-  currentRatio
-}: { 
-  history: { time: number; ratio: number }[]
-  priceEfficiencyHistory?: { time: number; ratio: number }[]
-  timeRange: TimeRange
-  currentRatio?: number | null
-}) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
-  const [dotPosition, setDotPosition] = useState<{ x: number; y: number } | null>(null)
-  const dotPosRef = useRef<{ x: number; y: number } | null>(null)
-  const animFrameRef = useRef<number>(0)
-  
-  // Filter history based on time range
-  const filteredHistory = useMemo(() => {
-    const now = Date.now()
-    const cutoff = timeRange === '4h' ? now - 4 * 60 * 60 * 1000 
-                 : timeRange === '1d' ? now - 24 * 60 * 60 * 1000 
-                 : now - 7 * 24 * 60 * 60 * 1000
-    return history.filter(h => h.time >= cutoff)
-  }, [history, timeRange])
-  
-  const filteredPriceEfficiency = useMemo(() => {
-    if (!priceEfficiencyHistory) return []
-    const now = Date.now()
-    const cutoff = timeRange === '4h' ? now - 4 * 60 * 60 * 1000 
-                 : timeRange === '1d' ? now - 24 * 60 * 60 * 1000 
-                 : now - 7 * 24 * 60 * 60 * 1000
-    const filtered = removeSpikes(priceEfficiencyHistory.filter(h => h.time >= cutoff))
-    
-    // Downsample for rendering performance — max ~400 points on the chart
-    // Canvas can't resolve more than ~1 point per pixel anyway
-    const MAX_RENDER_POINTS = 400
-    if (filtered.length <= MAX_RENDER_POINTS) return filtered
-    
-    const step = filtered.length / MAX_RENDER_POINTS
-    const downsampled: { time: number; ratio: number }[] = []
-    for (let i = 0; i < MAX_RENDER_POINTS; i++) {
-      downsampled.push(filtered[Math.floor(i * step)])
-    }
-    // Always include the very last point (current value)
-    downsampled.push(filtered[filtered.length - 1])
-    return downsampled
-  }, [priceEfficiencyHistory, timeRange])
-  
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas || filteredPriceEfficiency.length < 2) return
-
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    
-    let pulsePhase = 0
-
-    const drawChart = (phase: number) => {
-      const dpr = window.devicePixelRatio || 1
-      const rect = canvas.getBoundingClientRect()
-      
-      // Guard against zero dimensions
-      if (rect.width === 0 || rect.height === 0) return
-      
-      // Only reallocate the backing store when the size actually changes —
-      // doing it every frame (60fps) was a big chunk of the chart's CPU cost.
-      const targetW = Math.round(rect.width * dpr)
-      const targetH = Math.round(rect.height * dpr)
-      if (canvas.width !== targetW || canvas.height !== targetH) {
-        canvas.width = targetW
-        canvas.height = targetH
-      }
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-      
-      const width = rect.width
-      const height = rect.height
-      const padding = { top: 15, right: 50, bottom: 25, left: 50 }
-      
-      ctx.clearRect(0, 0, width, height)
-      
-      // Calculate Y range from price efficiency data only
-      if (filteredPriceEfficiency.length === 0) return
-      
-      // For price efficiency, ensure 1.0 and action zones are visible
-      const priceEffMin = Math.min(...filteredPriceEfficiency.map(h => h.ratio))
-      const priceEffMax = Math.max(...filteredPriceEfficiency.map(h => h.ratio))
-      
-      // Include action zone thresholds in the range
-      let minRatio = Math.min(priceEffMin, 0.95) * 0.98
-      let maxRatio = Math.max(priceEffMax, 1.10) * 1.02
-      const ratioRange = maxRatio - minRatio || 1
-      
-      const chartWidth = width - padding.left - padding.right
-      const chartHeight = height - padding.top - padding.bottom
-
-      // ── Zone thresholds ──
-      const GREEN_ZONE = 1.040
-      const RED_ZONE = 0.960
-
-      // ── Green Zone (top): above 1.040 — "Greenzone Efficiency Strategy" ──
-      if (filteredPriceEfficiency.length > 0 && maxRatio > GREEN_ZONE) {
-        const greenY = padding.top + chartHeight - ((GREEN_ZONE - minRatio) / ratioRange) * chartHeight
-        const topY = padding.top
-        if (greenY > topY) {
-          const gradient = ctx.createLinearGradient(0, topY, 0, greenY)
-          gradient.addColorStop(0, 'rgba(16, 185, 129, 0.25)')
-          gradient.addColorStop(1, 'rgba(16, 185, 129, 0.06)')
-          ctx.fillStyle = gradient
-          ctx.fillRect(padding.left, topY, chartWidth, greenY - topY)
-
-          // Green zone label
-          ctx.fillStyle = 'rgba(16, 185, 129, 0.85)'
-          ctx.textAlign = 'center'
-          ctx.font = 'bold 10px sans-serif'
-          ctx.fillText('\u{1F7E2} Greenzone Efficiency Strategy', padding.left + chartWidth / 2, topY + 16)
-        }
-      }
-
-      // ── Blue Neutral Zone: between 0.960 and 1.040 ──
-      if (filteredPriceEfficiency.length > 0) {
-        const upperY = padding.top + chartHeight - ((GREEN_ZONE - minRatio) / ratioRange) * chartHeight
-        const lowerY = padding.top + chartHeight - ((RED_ZONE - minRatio) / ratioRange) * chartHeight
-        const topBound = Math.max(upperY, padding.top)
-        const bottomBound = Math.min(lowerY, padding.top + chartHeight)
-        if (bottomBound > topBound) {
-          const gradient = ctx.createLinearGradient(0, topBound, 0, bottomBound)
-          gradient.addColorStop(0, 'rgba(59, 130, 246, 0.10)')
-          gradient.addColorStop(0.5, 'rgba(59, 130, 246, 0.15)')
-          gradient.addColorStop(1, 'rgba(59, 130, 246, 0.10)')
-          ctx.fillStyle = gradient
-          ctx.fillRect(padding.left, topBound, chartWidth, bottomBound - topBound)
-        }
-      }
-
-      // ── Red Zone (bottom): below 0.960 — "Redzone Efficiency Strategy" ──
-      if (filteredPriceEfficiency.length > 0 && minRatio < RED_ZONE) {
-        const redY = padding.top + chartHeight - ((RED_ZONE - minRatio) / ratioRange) * chartHeight
-        const bottomY = padding.top + chartHeight
-        if (redY < bottomY) {
-          const gradient = ctx.createLinearGradient(0, redY, 0, bottomY)
-          gradient.addColorStop(0, 'rgba(239, 68, 68, 0.06)')
-          gradient.addColorStop(1, 'rgba(239, 68, 68, 0.25)')
-          ctx.fillStyle = gradient
-          ctx.fillRect(padding.left, redY, chartWidth, bottomY - redY)
-
-          // Red zone label
-          ctx.fillStyle = 'rgba(239, 68, 68, 0.85)'
-          ctx.textAlign = 'center'
-          ctx.font = 'bold 10px sans-serif'
-          ctx.fillText('\u{1F534} Redzone Efficiency Strategy', padding.left + chartWidth / 2, bottomY - 8)
-        }
-      }
-
-      // Draw horizontal grid lines and Y-axis labels
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)'
-      ctx.lineWidth = 1
-      ctx.fillStyle = '#6B7280'
-      ctx.font = '9px monospace'
-      ctx.textAlign = 'right'
-      
-      for (let i = 0; i <= 4; i++) {
-        const y = padding.top + chartHeight * (i / 4)
-        const ratioVal = maxRatio - (ratioRange * i / 4)
-        
-        ctx.beginPath()
-        ctx.moveTo(padding.left, y)
-        ctx.lineTo(width - padding.right, y)
-        ctx.stroke()
-        
-        // Skip auto grid labels between 0.95 and 1.05 — we have static labels
-        // for 0.960, 1.000, and 1.040 already, so no need for numbers in that range
-        if (ratioVal >= 0.95 && ratioVal <= 1.05) continue
-        ctx.fillText(ratioVal.toFixed(3), padding.left - 4, y + 3)
-      }
-
-      // ── Parity line at 1.000 in blue with dotted line ──
-      if (filteredPriceEfficiency.length > 0 && minRatio < 1 && maxRatio > 1) {
-        const parityY = padding.top + chartHeight - ((1 - minRatio) / ratioRange) * chartHeight
-        ctx.strokeStyle = 'rgba(59, 130, 246, 0.5)'
-        ctx.setLineDash([4, 4])
-        ctx.lineWidth = 1
-        ctx.beginPath()
-        ctx.moveTo(padding.left, parityY)
-        ctx.lineTo(width - padding.right, parityY)
-        ctx.stroke()
-        ctx.setLineDash([])
-
-        // Blue "1.000" label on left y-axis
-        ctx.fillStyle = '#3B82F6'
-        ctx.textAlign = 'right'
-        ctx.font = 'bold 10px monospace'
-        ctx.fillText('1.000', padding.left - 4, parityY + 3)
-      }
-
-      // ── 1.040 threshold line (orange dashed) ──
-      if (filteredPriceEfficiency.length > 0 && minRatio < GREEN_ZONE && maxRatio > GREEN_ZONE) {
-        const threshY = padding.top + chartHeight - ((GREEN_ZONE - minRatio) / ratioRange) * chartHeight
-        ctx.strokeStyle = 'rgba(249, 115, 22, 0.4)'
-        ctx.setLineDash([8, 4])
-        ctx.lineWidth = 1
-        ctx.beginPath()
-        ctx.moveTo(padding.left, threshY)
-        ctx.lineTo(width - padding.right, threshY)
-        ctx.stroke()
-        ctx.setLineDash([])
-        ctx.lineWidth = 1
-
-        // Label on left side
-        ctx.fillStyle = '#F97316'
-        ctx.textAlign = 'right'
-        ctx.font = '9px sans-serif'
-        ctx.fillText(GREEN_ZONE.toFixed(3), padding.left - 4, threshY + 3)
-      }
-
-      // ── 0.960 threshold line (orange dashed) ──
-      if (filteredPriceEfficiency.length > 0 && minRatio < RED_ZONE && maxRatio > RED_ZONE) {
-        const threshY = padding.top + chartHeight - ((RED_ZONE - minRatio) / ratioRange) * chartHeight
-        ctx.strokeStyle = 'rgba(249, 115, 22, 0.4)'
-        ctx.setLineDash([8, 4])
-        ctx.lineWidth = 1
-        ctx.beginPath()
-        ctx.moveTo(padding.left, threshY)
-        ctx.lineTo(width - padding.right, threshY)
-        ctx.stroke()
-        ctx.setLineDash([])
-        ctx.lineWidth = 1
-
-        // Label on left side
-        ctx.fillStyle = '#F97316'
-        ctx.textAlign = 'right'
-        ctx.font = '9px sans-serif'
-        ctx.fillText(RED_ZONE.toFixed(3), padding.left - 4, threshY + 3)
-      }
-
-      // Draw X-axis time labels
-      ctx.fillStyle = '#6B7280'
-      ctx.textAlign = 'center'
-      const times = filteredPriceEfficiency.map(h => h.time)
-      const minTime = Math.min(...times)
-      const maxTime = Math.max(...times)
-      
-      // Format labels based on time range
-      for (let i = 0; i <= 4; i++) {
-        const x = padding.left + chartWidth * (i / 4)
-        const timeVal = minTime + (maxTime - minTime) * (i / 4)
-        const date = new Date(timeVal)
-        let label = ''
-        if (timeRange === '4h') {
-          label = `${date.getHours()}:${String(date.getMinutes()).padStart(2, '0')}`
-        } else if (timeRange === '1d') {
-          label = `${date.getHours()}:00`
-        } else {
-          label = `${date.getMonth() + 1}/${date.getDate()}`
-        }
-        ctx.fillText(label, x, height - 5)
-      }
-      
-      // ── Draw price efficiency line with pulsing glow ──
-      if (filteredPriceEfficiency.length >= 2) {
-        const data = filteredPriceEfficiency
-        const pulse = 0.5 + 0.5 * Math.sin(phase) // oscillates 0..1
-
-        // Draw gradient fill under the line
-        const fillGradient = ctx.createLinearGradient(0, padding.top, 0, height - padding.bottom)
-        fillGradient.addColorStop(0, 'rgba(16, 185, 129, 0.2)')
-        fillGradient.addColorStop(1, 'rgba(0, 0, 0, 0)')
-        
-        ctx.beginPath()
-        ctx.moveTo(padding.left, height - padding.bottom)
-        data.forEach((point, i) => {
-          const x = padding.left + chartWidth * (i / (data.length - 1))
-          const y = padding.top + chartHeight - ((point.ratio - minRatio) / ratioRange) * chartHeight
-          ctx.lineTo(x, y)
-        })
-        ctx.lineTo(padding.left + chartWidth, height - padding.bottom)
-        ctx.closePath()
-        ctx.fillStyle = fillGradient
-        ctx.fill()
-
-        // Pulsing glow layer (wider, semi-transparent)
-        ctx.save()
-        ctx.shadowColor = '#10B981'
-        ctx.shadowBlur = 4 + 10 * pulse
-        ctx.beginPath()
-        ctx.strokeStyle = `rgba(16, 185, 129, ${0.15 + 0.25 * pulse})`
-        ctx.lineWidth = 4 + 4 * pulse
-        ctx.lineCap = 'round'
-        ctx.lineJoin = 'round'
-        data.forEach((point, i) => {
-          const x = padding.left + chartWidth * (i / (data.length - 1))
-          const y = padding.top + chartHeight - ((point.ratio - minRatio) / ratioRange) * chartHeight
-          if (i === 0) ctx.moveTo(x, y)
-          else ctx.lineTo(x, y)
-        })
-        ctx.stroke()
-        ctx.restore()
-
-        // Core line (solid, always visible)
-        ctx.beginPath()
-        ctx.strokeStyle = '#10B981'
-        ctx.lineWidth = 2
-        ctx.lineCap = 'round'
-        ctx.lineJoin = 'round'
-        data.forEach((point, i) => {
-          const x = padding.left + chartWidth * (i / (data.length - 1))
-          const y = padding.top + chartHeight - ((point.ratio - minRatio) / ratioRange) * chartHeight
-          if (i === 0) ctx.moveTo(x, y)
-          else ctx.lineTo(x, y)
-        })
-        ctx.stroke()
-
-        // Pulsing dot at the end of the line
-        const lastPoint = data[data.length - 1]
-        const lastX = padding.left + chartWidth
-        const lastY = padding.top + chartHeight - ((lastPoint.ratio - minRatio) / ratioRange) * chartHeight
-        
-        // Store position for overlay — only when it moves, otherwise this
-        // re-rendered the component on every animation frame
-        const prevDot = dotPosRef.current
-        if (!prevDot || Math.abs(prevDot.x - lastX) > 0.5 || Math.abs(prevDot.y - lastY) > 0.5) {
-          dotPosRef.current = { x: lastX, y: lastY }
-          setDotPosition({ x: lastX, y: lastY })
-        }
-
-        // Outer glow ring (pulsing)
-        ctx.save()
-        ctx.shadowColor = '#10B981'
-        ctx.shadowBlur = 8 + 12 * pulse
-        ctx.beginPath()
-        ctx.arc(lastX, lastY, 4 + 3 * pulse, 0, 2 * Math.PI)
-        ctx.fillStyle = `rgba(16, 185, 129, ${0.3 + 0.4 * pulse})`
-        ctx.fill()
-        ctx.restore()
-
-        // Core dot
-        ctx.beginPath()
-        ctx.arc(lastX, lastY, 4, 0, 2 * Math.PI)
-        ctx.fillStyle = '#10B981'
-        ctx.fill()
-
-        // Inner bright dot
-        ctx.beginPath()
-        ctx.arc(lastX, lastY, 2, 0, 2 * Math.PI)
-        ctx.fillStyle = '#ffffff'
-        ctx.fill()
-
-        // Current ratio label — positioned at the FAR RIGHT edge of the canvas
-        const ratioText = lastPoint.ratio.toFixed(3)
-        ctx.font = 'bold 11px monospace'
-        const textWidth = ctx.measureText(ratioText).width
-        const pillPadX = 6
-        const pillPadY = 4
-        const labelY = lastY - 2
-
-        // Pill extends from right edge of canvas leftward
-        const pillR = 4
-        const pillW = textWidth + pillPadX * 2
-        const pillH = 16 + pillPadY
-        const pillRightEdge = width - 4
-        const pillX = pillRightEdge - pillW
-        const pillY = labelY - 8 - pillPadY
-
-        // Background pill
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.85)'
-        ctx.beginPath()
-        ctx.moveTo(pillX + pillR, pillY)
-        ctx.lineTo(pillX + pillW - pillR, pillY)
-        ctx.quadraticCurveTo(pillX + pillW, pillY, pillX + pillW, pillY + pillR)
-        ctx.lineTo(pillX + pillW, pillY + pillH - pillR)
-        ctx.quadraticCurveTo(pillX + pillW, pillY + pillH, pillX + pillW - pillR, pillY + pillH)
-        ctx.lineTo(pillX + pillR, pillY + pillH)
-        ctx.quadraticCurveTo(pillX, pillY + pillH, pillX, pillY + pillH - pillR)
-        ctx.lineTo(pillX, pillY + pillR)
-        ctx.quadraticCurveTo(pillX, pillY, pillX + pillR, pillY)
-        ctx.closePath()
-        ctx.fill()
-
-        // Border
-        ctx.strokeStyle = 'rgba(16, 185, 129, 0.6)'
-        ctx.lineWidth = 1
-        ctx.stroke()
-
-        // Text — left-aligned within pill
-        ctx.fillStyle = '#10B981'
-        ctx.textAlign = 'left'
-        ctx.fillText(ratioText, pillX + pillPadX, labelY)
-      }
-    }
-    
-    // Animation loop for pulsing effect (static frame when the user prefers reduced motion)
-    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
-    // ~30fps: the pulse looks identical to 60fps at half the draw cost.
-    // Phase advances by elapsed time, so the pulse speed is the same as before.
-    const FRAME_MS = 1000 / 30
-    let lastDraw = 0
-    const animate = (now: number) => {
-      if (now - lastDraw >= FRAME_MS) {
-        pulsePhase += 0.04 * ((now - (lastDraw || now - FRAME_MS)) / (1000 / 60))
-        lastDraw = now
-        drawChart(pulsePhase)
-      }
-      animFrameRef.current = requestAnimationFrame(animate)
-    }
-    if (reduceMotion) {
-      pulsePhase = Math.PI / 2
-      drawChart(pulsePhase)
-    } else {
-      animFrameRef.current = requestAnimationFrame(animate)
-    }
-    
-    // Handle resize
-    const handleResize = () => drawChart(pulsePhase)
-    window.addEventListener('resize', handleResize)
-    return () => {
-      cancelAnimationFrame(animFrameRef.current)
-      window.removeEventListener('resize', handleResize)
-    }
-  }, [filteredHistory, filteredPriceEfficiency, timeRange])
-  
-  // Show placeholder if not enough price efficiency data
-  if (filteredPriceEfficiency.length < 2) {
-    return (
-      <div className="w-full h-full flex flex-col items-center justify-center text-gray-500 text-xs">
-        {priceEfficiencyHistory && priceEfficiencyHistory.length === 0 
-          ? 'Waiting for Uniswap price data...' 
-          : 'Collecting more data points...'}
-      </div>
-    )
-  }
-  
-  return (
-    <div ref={containerRef} className="relative w-full h-full">
-      <canvas ref={canvasRef} className="w-full h-full" style={{ width: '100%', height: '100%' }} />
-      {/* Pulsing dot */}
-      {dotPosition && currentRatio !== null && currentRatio !== undefined && (
-        <div 
-          className="absolute pointer-events-none"
-          style={{ 
-            left: dotPosition.x, 
-            top: dotPosition.y,
-            transform: 'translate(-50%, -50%)'
-          }}
-        >
-          <div className="relative">
-            <div className="w-3.5 h-3.5 rounded-full bg-[#10B981] animate-ping absolute top-0 left-0" />
-            <div className="w-3.5 h-3.5 rounded-full bg-[#10B981] relative" />
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
+// Arbitrage zones for the price-efficiency signal (Uniswap price ÷ mint cost)
+const GREEN_ZONE = 1.05 // at or above: mint here, sell on Uniswap
+const RED_ZONE = 0.95   // at or below: buy on Uniswap, redeem here
+// Gauge domain shown on the signal bar
+const GAUGE_MIN = 0.9
+const GAUGE_MAX = 1.1
 
 // ============ SWAP WIDGET ============
 function UniswapWidget({ ggxAddress }: { ggxAddress: string }) {
@@ -833,6 +366,7 @@ function UniswapWidget({ ggxAddress }: { ggxAddress: string }) {
       <iframe
         src={`https://switch.win/widget?network=base&background_color=0a0a0b&font_color=ffffff&secondary_font_color=6b7280&border_color=FF6B35&backdrop_color=transparent&from=0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee&to=${ggxAddress}`}
         allow="clipboard-read; clipboard-write"
+        loading="lazy"
         style={{
           border: 'none',
           width: '125%',
@@ -1466,6 +1000,27 @@ function BouncingLogo({ className }: { className: string }) {
       if (!held) pointer = null
     }
 
+    // Every 30s the logo pops out one ESHARE + one RAGE baby on its own; they head
+    // back home 15s later. Skipped while the tab is hidden or the logo is "empty".
+    const AUTO_EVERY_MS = 30_000
+    const AUTO_RETURN_MS = 15_000
+    const autoPop = () => {
+      if (document.hidden || pairsOut() >= PAIRS_TO_MIN) return
+      const now = performance.now()
+      const zr = zone.getBoundingClientRect()
+      const c = logoCenter(zr)
+      const side = Math.random() < 0.5 ? -1 : 1
+      spawnBaby('/eshare-logo.webp', side, c, now)
+      spawnBaby('/rage-logo.webp', -side, c, now)
+      babies[babies.length - 1].homeAt = now + AUTO_RETURN_MS
+      babies[babies.length - 2].homeAt = now + AUTO_RETURN_MS
+      shakeStart = now
+      shakeAmp = 0.6
+      scaleVel -= 0.05
+      start()
+    }
+    const autoTimer = setInterval(autoPop, AUTO_EVERY_MS)
+
     zone.addEventListener('pointerdown', onPointerDown)
     zone.addEventListener('pointerenter', onMove)
     zone.addEventListener('pointermove', onMove)
@@ -1474,6 +1029,7 @@ function BouncingLogo({ className }: { className: string }) {
     zone.addEventListener('pointerleave', onLeave)
     return () => {
       cancelAnimationFrame(raf)
+      clearInterval(autoTimer)
       zone.removeEventListener('pointerdown', onPointerDown)
       zone.removeEventListener('pointerenter', onMove)
       zone.removeEventListener('pointermove', onMove)
@@ -1553,6 +1109,14 @@ export default function Dashboard() {
     }
   }, [])
   
+  // Freeze CSS animations while the tab is in the background
+  useEffect(() => {
+    const sync = () => document.documentElement.classList.toggle('tab-hidden', document.hidden)
+    sync()
+    document.addEventListener('visibilitychange', sync)
+    return () => document.removeEventListener('visibilitychange', sync)
+  }, [])
+
   const { address, isConnected, chain } = useAccount()
   const { connectors, connect, isPending: isConnecting, error: connectError } = useConnect()
 
@@ -1633,15 +1197,9 @@ export default function Dashboard() {
   const [rescueAmount, setRescueAmount] = useState('')
   const [burnErageAmount, setBurnErageAmount] = useState('')
   
-  // Chart history — stored in separate hook for persistence across page.tsx updates
-  const {
-    priceEfficiencyHistory,
-    backingRatioHistory,
-    addPriceEfficiencyPoint,
-    addBackingRatioPoint,
-  } = useChartHistory()
-
-  const [timeRange, setTimeRange] = useState<TimeRange>('1d')
+  // Backing-ratio history (server-stored, 30-min resolution) — only used for the APRs.
+  // The price-efficiency chart is gone, so nothing price-related is stored anymore.
+  const { backingRatioHistory, addBackingRatioPoint } = useChartHistory()
   
   // Chart history loading/clearing is handled by useChartHistory hook above
   // No more inline localStorage logic here — data persists across page.tsx updates
@@ -1723,27 +1281,7 @@ export default function Dashboard() {
   const { data: ggxT0 } = useReadContract({ address: CONTRACTS.GGX_LP_03, abi: PAIR_ABI, functionName: 'token0' })
   const { data: ggxT1 } = useReadContract({ address: CONTRACTS.GGX_LP_03, abi: PAIR_ABI, functionName: 'token1' })
   
-  // GGX-ETH V3 Pool balances (for TVL calculation and price)
-  const { data: ggxPoolWethBal } = useReadContract({ 
-    address: CONTRACTS.WETH, 
-    abi: ERC20_ABI, 
-    functionName: 'balanceOf', 
-    args: [CONTRACTS.GGX_LP],
-    query: { 
-      enabled: true,
-      refetchInterval: 20000 
-    }
-  })
-  const { data: ggxPoolGgxBal } = useReadContract({ 
-    address: CONTRACTS.GGX, 
-    abi: ERC20_ABI, 
-    functionName: 'balanceOf', 
-    args: [CONTRACTS.GGX_LP],
-    query: { 
-      enabled: true,
-      refetchInterval: 20000 
-    }
-  })
+  // (ERAGE-ETH V3 1% pool discontinued — no longer read or counted in TVL)
 
 
   // ERAGE-ETH V3 0.3% pool — kept in TVL (main trading pool); price feed comes from the 1% pool via GGX_LP above
@@ -2051,54 +1589,29 @@ export default function Dashboard() {
   // Stable, smoothed APR — uses ALL tracked data (not just last 48 hours) and projects
   // over a 30-day period. Less volatile than 48H APR because it averages over
   // the entire tracking history rather than just the last two days of price action.
-  const estimated30dAPR = useMemo<{ rate: number } | null>(() => {
-    // Method 1: Real observed growth using ALL history, projected over 30 days
-    if (backingRatioHistory.length >= 1) {
-      // With just 1 entry we cannot compute growth. Return null instead of
-      // falling through to lifetime methods (which fabricate 155%-style numbers
-      // from contract-launch growth divided by a hardcoded 30-day estimate).
-      if (backingRatioHistory.length < 2) {
-        return null
-      }
-      const now = Date.now()
-      const oldestEntry = backingRatioHistory[0]
-      
-      // Require at least 24 hours of tracked data before showing a 30D rate.
-      // Annualizing tiny growth over a few minutes produces nonsense (the
-      // short-window APR equivalent showed thousands of percent with 10
-      // minutes of data).
-      const minDataAge = 24 * 60 * 60 * 1000
-      if (now - oldestEntry.time >= minDataAge) {
-        const pastVal = oldestEntry.ratio
-        if (pastVal > 0) {
-          // currentRatio === pastVal → no growth → 0% APR (DO NOT fall through
-          // to lifetime methods, which would fabricate a misleading rate).
-          // currentRatio < pastVal should not happen (backing ratio is monotonic).
-          if (currentRatio <= pastVal) {
-            return { rate: 0 }
-          }
-          const growthRate = (currentRatio - pastVal) / pastVal
-          // Scale observed growth to 30 days regardless of actual tracking time
-          const hoursElapsed = (now - oldestEntry.time) / (60 * 60 * 1000)
-          const growthPer30Days = growthRate * (720 / hoursElapsed) // 720 hrs = 30 days
-          const annualizedRate = growthPer30Days * (365 / 30) * 100
-          if (annualizedRate >= 0 && annualizedRate <= 99999) {
-            return { rate: annualizedRate }
-          }
-        }
-      }
-      
-      // Method 1 had history but couldn't produce a rate (insufficient elapsed
-      // time, or other gate failed). Return null instead of fabricating a
-      // number from lifetime data.
-      return null
+  // ===== 30D / 90D APR =====
+  // Growth of the backing ratio from the history point closest to N days ago
+  // (or the oldest point we have, if history is shorter than N days), annualized.
+  // Needs at least 24h of history. Until history is longer than 30 days, the 90D
+  // figure uses the same oldest point as the 30D figure, so they match at first.
+  const windowAPR = (days: number): { rate: number } | null => {
+    if (backingRatioHistory.length < 2) return null
+    const now = Date.now()
+    const target = now - days * 24 * 60 * 60 * 1000
+    let entry = backingRatioHistory[0]
+    for (const e of backingRatioHistory) {
+      if (Math.abs(e.time - target) < Math.abs(entry.time - target)) entry = e
     }
-
-    // No backing-ratio history at all (still loading, or unavailable). Show nothing
-    // rather than a lifetime estimate — those assumed a 30-day age and showed ~200%
-    // when the real rate was ~5%.
-    return null
-  }, [backingRatioHistory, currentRatio])
+    if (entry.time < target - 2 * 24 * 60 * 60 * 1000) entry = backingRatioHistory[0]
+    const hoursElapsed = (now - entry.time) / (60 * 60 * 1000)
+    if (hoursElapsed < 24 || entry.ratio <= 0) return null
+    if (currentRatio <= entry.ratio) return { rate: 0 }
+    const growth = (currentRatio - entry.ratio) / entry.ratio
+    const annualized = growth * (8760 / hoursElapsed) * 100
+    return annualized >= 0 && annualized <= 99999 ? { rate: annualized } : null
+  }
+  const estimated30dAPR = useMemo(() => windowAPR(30), [backingRatioHistory, currentRatio]) // eslint-disable-line react-hooks/exhaustive-deps
+  const estimated90dAPR = useMemo(() => windowAPR(90), [backingRatioHistory, currentRatio]) // eslint-disable-line react-hooks/exhaustive-deps
   
   // ACTUAL backing ratio calculated from balances/supply
   // This shows the real backing per GGX based on what's in the contract
@@ -2380,7 +1893,7 @@ export default function Dashboard() {
     const ggxPriceUsd = ggxPrice * ethPriceUsd
     
     return { ethPriceIsFallback, ragePrice, ragePair, ragePriceInUsdc, esharePrice, esharePair, ggxPrice, ggxPair, ggxPriceUsd, ethPriceUsd, rageLpExists, eshareLpExists, ggxLpExists }
-  }, [rageSlot0, rageLiquidity, rageT0, rageT1, eshareSlot0, eshareLiquidity, eshareT0, eshareT1, ggxSlot0, ggxLiquidity, ggxT0, ggxT1, ggxPoolWethBal, ggxPoolGgxBal, wethUsdcSlot0, wethUsdcT0, wethUsdcPoolWethBal, wethUsdcPoolUsdcBal])
+  }, [rageSlot0, rageLiquidity, rageT0, rageT1, eshareSlot0, eshareLiquidity, eshareT0, eshareT1, ggxSlot0, ggxLiquidity, ggxT0, ggxT1, wethUsdcSlot0, wethUsdcT0, wethUsdcPoolWethBal, wethUsdcPoolUsdcBal])
   
   // Calculate GGX theoretical backing value in USD directly
   // This handles the case where ESHARE is in ETH and RAGE is in USDC
@@ -2437,7 +1950,6 @@ export default function Dashboard() {
     }
     add('backing-es', 'ESHARE Backing', '#8B5CF6', n(backingBalances?.[0]), 'ES', esUsd)
     add('backing-ra', 'RAGE Backing', '#EF4444', n(backingBalances?.[1]), 'RA', raUsd)
-    add('erage-eth-1', 'ERAGE-ETH (V3 1%)', '#3B82F6', n(ggxPoolWethBal), 'ETH', ethUsd)
     add('erage-eth-03', 'ERAGE-ETH (V3 0.3%)', '#3B82F6', n(ggxPool03WethBal), 'ETH', ethUsd)
     add('erage-rage-1', 'ERAGE-RAGE (V3 1%)', '#EF4444', n(erageRagePoolRageBal), 'RA', raUsd)
     add('erage-eshare-1', 'ERAGE-ESHARE (V3 1%)', '#8B5CF6', n(erageEsharePoolEshareBal), 'ES', esUsd)
@@ -2447,7 +1959,7 @@ export default function Dashboard() {
     }
     const total = items.reduce((sum, it) => sum + (it.usd ?? 0), 0)
     return { items, total }
-  }, [tokenUsd, backingBalances, ggxPoolWethBal, ggxPool03WethBal, erageRagePoolRageBal, erageEsharePoolEshareBal, tvlPoolA, tvlPoolB, tvlPoolC])
+  }, [tokenUsd, backingBalances, ggxPool03WethBal, erageRagePoolRageBal, erageEsharePoolEshareBal, tvlPoolA, tvlPoolB, tvlPoolC])
 
   // Dollar value of all ERAGE in existence: supply × Uniswap price
   // (falls back to backing price before the pool price has loaded)
@@ -2458,12 +1970,12 @@ export default function Dashboard() {
   }, [ggxSupply, prices.ggxPriceUsd, ggxBackingValueUsd])
 
   const renderTvlItems = (gridClass: string) => (
-    <div className={`grid ${gridClass} gap-2 text-[9px]`}>
+    <div className={`grid ${gridClass} gap-2 text-[11px]`}>
       {tvl.items.map((item) => (
-        <div key={item.key} className="rounded p-1.5" style={{ background: `${item.color}1A` }}>
+        <div key={item.key} className="rounded-lg p-2" style={{ background: `${item.color}1A` }}>
           <p className="font-semibold" style={{ color: item.color }}>{item.label}</p>
-          <p className="text-white">{item.amounts.map((a) => `${formatAmount(a.amount)} ${a.symbol}`).join(' + ')}</p>
-          <p className="text-gray-400">{item.usd !== null ? `$${formatPrice(item.usd)}` : 'No price feed'}</p>
+          <p className="text-white font-mono">{item.amounts.map((a) => `${formatAmount(a.amount)} ${a.symbol}`).join(' + ')}</p>
+          <p className={item.usd !== null ? 'text-[#10B981] font-semibold' : 'text-gray-500'}>{item.usd !== null ? `$${formatPrice(item.usd)}` : 'No price feed'}</p>
         </div>
       ))}
     </div>
@@ -2489,26 +2001,56 @@ export default function Dashboard() {
     return ratio
   }, [prices.ggxPrice, prices.ethPriceUsd, prices.ethPriceIsFallback, ggxBackingValueUsd])
 
-  // Track price efficiency history for the chart.
-  // Recorded on every ratio change AND on a 2s heartbeat with the latest value, so the
-  // series keeps ticking even while the price is flat (the ratio only changes when a pool
-  // price refetches, every ~8–20s). useChartHistory throttles the actual spacing:
-  // 2s until the chart has 2 points, then 10s.
-  const latestEfficiencyRef = useRef<number | null>(null)
-  useEffect(() => {
-    latestEfficiencyRef.current = priceEfficiencyRatio
-    if (priceEfficiencyRatio === null || priceEfficiencyRatio <= 0) return
-    addPriceEfficiencyPoint(priceEfficiencyRatio)
-  }, [priceEfficiencyRatio, addPriceEfficiencyPoint])
+  // ============ ARBITRAGE SIGNAL ============
+  // Live recommendation from the current price efficiency — no stored history.
+  const signal = useMemo(() => {
+    const r = priceEfficiencyRatio
+    if (r === null) return null
+    const pct = (r - 1) * 100
+    const pctStr = `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`
+    if (r >= GREEN_ZONE) {
+      return {
+        zone: 'green' as const, color: '#10B981', label: 'Green Zone', pctStr, pct,
+        title: 'Mint → Sell',
+        body: `ERAGE trades ${pct.toFixed(1)}% above its mint cost on Uniswap. Mint here, then sell on Uniswap.` as React.ReactNode,
+      }
+    }
+    if (r <= RED_ZONE) {
+      return {
+        zone: 'red' as const, color: '#EF4444', label: 'Red Zone', pctStr, pct,
+        title: 'Buy → Redeem',
+        body: `ERAGE trades ${Math.abs(pct).toFixed(1)}% below its backing on Uniswap. Buy there, then redeem here for ESHARE + RAGE.` as React.ReactNode,
+      }
+    }
+    return {
+      zone: 'blue' as const, color: '#3B82F6', label: 'Neutral Zone', pctStr, pct,
+      title: 'Mint or Buy or Hold',
+      body: (
+        <>
+          No arbitrage edge right now — mint or buy to add, or hold and{' '}
+          <a href={HYPERDRIVER_ERAGE_URL} target="_blank" rel="noopener noreferrer" className="inline-link">stake</a>.
+        </>
+      ) as React.ReactNode,
+    }
+  }, [priceEfficiencyRatio])
 
-  useEffect(() => {
-    const id = setInterval(() => {
-      const r = latestEfficiencyRef.current
-      if (r !== null && r > 0) addPriceEfficiencyPoint(r)
-    }, 2000)
-    return () => clearInterval(id)
-  }, [addPriceEfficiencyPoint])
-  
+  // Cursor spotlight on the stat cards
+  const spotlight = (e: React.MouseEvent<HTMLElement>) => {
+    const r = e.currentTarget.getBoundingClientRect()
+    e.currentTarget.style.setProperty('--mx', `${e.clientX - r.left}px`)
+    e.currentTarget.style.setProperty('--my', `${e.clientY - r.top}px`)
+  }
+
+  // Jump to the action box in a given mode (used by the signal buttons)
+  const actionRef = useRef<HTMLDivElement>(null)
+  const selectMode = (mode: 'ETH' | 'ESHARE_RAGE' | 'GGX') => {
+    setInputToken(mode)
+    setInputAmount('')
+    setEshareInput('')
+    setRageInput('')
+    actionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+
   // Estimated GGX output for ETH zap
   // Computed from the actual backing value (cost to mint 1 GGX in ETH terms)
   // rather than from the Uniswap market price. This avoids the need for a
@@ -2844,7 +2386,7 @@ export default function Dashboard() {
   }
   
   return (
-    <div className="h-screen lg:h-screen bg-[#0A0A0B] text-white overflow-y-auto lg:overflow-hidden">
+    <div className="min-h-screen lg:h-screen lg:overflow-hidden bg-[#0A0A0B] text-white">
       {/* Background Effects */}
       <div className="fixed inset-0 pointer-events-none">
         <img src="/ERAGE-background.webp" alt="" className="w-full h-full object-cover" />
@@ -2853,32 +2395,24 @@ export default function Dashboard() {
       </div>
       <div className="noise-overlay" />
       
-      <div className="relative z-10 min-h-full lg:h-full flex flex-col lg:overflow-hidden">
+      <div className="relative z-10 flex flex-col min-h-screen lg:h-screen">
         {/* Header */}
         <header className="px-3 sm:px-4 py-1" style={{ background: 'transparent' }}>
-          {/* 3-column grid: left (logo) | center (HyperDriver CTA, desktop only) | right (wallet).
-              The two side columns are equal 1fr, so the CTA is truly centered without any
-              absolute positioning — nothing can overlap or get pushed around. */}
-          <div className="max-w-7xl mx-auto grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+          <div className="max-w-7xl mx-auto grid grid-cols-[1fr_auto] items-center gap-2">
             <div className="flex items-center gap-2 sm:gap-3 min-w-0 justify-self-start">
               <img src="/ERAGE-logo.webp" className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl object-cover shrink-0 animate-pulse-glow" alt="ERAGE" />
               <div className="min-w-0">
                 <h1 className="text-sm sm:text-lg font-bold tracking-tight truncate">ERAGE Protocol</h1>
               </div>
-              <span className="hidden sm:flex items-center gap-1 px-2 py-1 text-[10px] bg-[#3B82F6]/10 text-[#3B82F6] rounded-full border border-[#3B82F6]/20">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#3B82F6] animate-pulse" />
-                Base
-              </span>
 
             </div>
             
-            {/* Centered on desktop (empty middle column on smaller screens) */}
-            <div className="hidden lg:flex justify-center">
-              <HyperDriverCTA pct={hyperdriverStakedPct} className="flex" />
-            </div>
-            <div className="lg:hidden" />
 
             <div className="flex items-center gap-1 sm:gap-2 shrink-0 justify-self-end">
+              <span className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-[#3B82F6]/10 text-[#60A5FA] rounded-full border border-[#3B82F6]/25">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#3B82F6] animate-pulse" />
+                Base
+              </span>
               {isConnected ? (
                 <>
                   <div className="flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 bg-white/5 rounded-xl border border-white/10">
@@ -2893,14 +2427,6 @@ export default function Dashboard() {
                   >
                     <Settings size={14} className="sm:hidden" /><Settings size={18} className="hidden sm:block" />
                   </button>
-                  <button 
-                    onClick={handleRefresh}
-                    className="p-1.5 sm:p-2 bg-white/5 hover:bg-white/10 rounded-xl border border-white/10 transition-all"
-                    title="Refresh data"
-                    aria-label="Refresh data"
-                  >
-                    <RefreshCw size={14} className={`sm:hidden ${refreshSpin ? 'animate-spin' : ''}`} /><RefreshCw size={16} className={`hidden sm:block ${refreshSpin ? 'animate-spin' : ''}`} />
-                  </button>
                   <button onClick={() => disconnect()} title="Disconnect" aria-label="Disconnect wallet" className="p-1.5 sm:p-2 bg-white/5 hover:bg-[#EF4444]/15 hover:text-[#EF4444] hover:border-[#EF4444]/30 rounded-xl border border-white/10 transition-all">
                     <LogOut size={14} className="sm:hidden" /><LogOut size={16} className="hidden sm:block" />
                   </button>
@@ -2912,205 +2438,232 @@ export default function Dashboard() {
               )}
             </div>
           </div>
-          {/* Full-width row under the header on smaller screens */}
-          <div className="lg:hidden max-w-7xl mx-auto mt-1.5">
-            <HyperDriverCTA pct={hyperdriverStakedPct} className="flex w-full" />
-          </div>
         </header>
         
-        {/* Main Content */}
-        <main className="flex-1 max-w-7xl mx-auto w-full px-2 sm:px-3 py-1 pb-4 lg:pb-1 lg:min-h-0 flex flex-col">
-          <div className="flex-1 min-h-0 lg:min-h-0 flex flex-col">
-              {/* Main Grid — mobile scrolls naturally, desktop uses viewport-locked layout */}
-              <div className="flex-1 grid grid-cols-12 gap-2 min-h-0 lg:overflow-hidden">
-                {/* Left Column */}
-                <div className="col-span-12 lg:col-span-5 flex flex-col gap-2 lg:min-h-0 lg:overflow-y-auto">
-                  {/* Top Row - 3 columns on desktop, 1 col on mobile */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2" style={{ minHeight: '80px' }}>
-                    {/* Backing Ratio */}
-                    <div className="stat-card rounded-xl bg-gradient-to-br from-[#FF6B35]/15 to-[#1a1a1c]/90 border border-white/6 p-2 flex flex-col transition-all duration-300 hover:brightness-110 hover:border-white/12">
-                      <div>
-                        <p className="text-[10px] text-gray-400 uppercase tracking-wider">Backing Ratio</p>
-                        <p className="text-lg sm:text-xl font-bold font-mono text-[#FF9A5C] ratio-glow">
-                          <RatchetNumber value={formatRatio(backingRatio?.[0] && backingRatio?.[1] ? (backingRatio[0] + backingRatio[1]) : undefined)} />
-                        </p>
-                        <p className="text-[10px] text-gray-500 flex items-center gap-1">
-                          <img src="/eshare-logo.webp" className="w-4 h-4 rounded object-cover" alt="ES" /> <span className="text-sm font-bold text-gray-300 mx-0.5">+</span> <img src="/rage-logo.webp" className="w-4 h-4 rounded object-cover" alt="RA" /> per ERAGE
-                        </p>
-                        {(estimatedAPR !== null || estimated30dAPR !== null) && (
-                          <div className="mt-2 pt-1.5 border-t border-white/10 space-y-1.5">
-                            {estimatedAPR !== null && (
-                              <div className="text-center">
-                                <p className="text-xs text-gray-400 font-medium">48H APR</p>
-                                <p className="text-base font-bold text-center">
-                                  <span className="text-[#10B981] animate-apr-glow" style={{ animationDuration: '0.6s' }}>~{Math.round(estimatedAPR.rate)}%</span>
-                                </p>
-                              </div>
-                            )}
-                            {estimatedAPR !== null && estimated30dAPR !== null && (
-                              <div className="border-t border-white/10" />
-                            )}
-                            {estimated30dAPR !== null && (
-                              <div className="text-center">
-                                <p className="text-xs text-gray-400 font-medium">30D APR</p>
-                                <p className="text-base font-bold text-center">
-                                  <span className="text-[#10B981] animate-apr-glow">~{estimated30dAPR.rate.toFixed(1)}%</span>
-                                </p>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
+        {/* Main Content — page scrolls on mobile, locked to the viewport on desktop */}
+        <main className="flex-1 max-w-7xl mx-auto w-full px-2 sm:px-3 pt-1.5 pb-4 lg:pb-2 flex flex-col gap-2 lg:min-h-0">
+
+          {/* ===== TOP ROW: Price Efficiency (wide) + Protocol Stats ===== */}
+          <section className="shrink-0 grid grid-cols-1 lg:grid-cols-12 gap-2">
+
+            {/* ---------- PRICE EFFICIENCY ---------- */}
+            <div
+              className={`signal-card zone-${signal?.zone ?? 'none'} lg:col-span-8 rounded-2xl px-4 py-3 rise`}
+              style={{ ['--zone' as string]: signal?.color ?? '#6B7280', ['--rise-delay' as string]: '0ms' } as React.CSSProperties}
+            >
+              <div className="signal-sheen" aria-hidden="true" />
+              <div className="relative">
+                {/* Row 1: big number | zone bar */}
+                <div className="grid grid-cols-1 md:grid-cols-[auto_minmax(0,1fr)] gap-3 md:gap-6 items-center">
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="relative flex w-2 h-2">
+                        <span className="absolute inline-flex w-full h-full rounded-full opacity-70 animate-ping" style={{ background: 'var(--zone)' }} />
+                        <span className="relative inline-flex w-2 h-2 rounded-full" style={{ background: 'var(--zone)' }} />
+                      </span>
+                      <span className="text-[11px] uppercase tracking-[0.22em] text-gray-300 font-bold">Price Efficiency</span>
                     </div>
-                    
-                    {/* GGX Supply */}
-                    <div className="stat-card rounded-xl bg-gradient-to-br from-[#3B82F6]/15 to-[#1a1a1c]/90 border border-white/6 p-2 transition-all duration-300 hover:brightness-110 hover:border-white/12">
-                      <div className="flex justify-between items-start">
-                        <p className="text-[10px] text-gray-400 uppercase tracking-wider">ERAGE Supply</p>
-                        {isPaused && <span className="text-[9px] text-[#EF4444] font-semibold">PAUSED</span>}
-                      </div>
-                      <div className="flex flex-wrap items-baseline justify-between gap-x-2">
-                        <p className="text-lg sm:text-xl font-bold font-mono">{formatNum(ggxSupply)}</p>
-                        {erageSupplyUsd > 0 && (
-                          <p className="text-sm font-semibold font-mono text-[#10B981]" title="ERAGE supply × ERAGE price">
-                            <RatchetNumber value={formatUsdCompact(erageSupplyUsd)} />
-                          </p>
-                        )}
-                      </div>
-                      {ggxBackingValueUsd > 0 && (
-                        <div className="mt-1 pt-1 border-t border-white/10">
-                          <p className="text-xs text-gray-400">Backing Price</p>
-                          <p className="text-lg font-semibold text-[#FFD700]">${formatPrice(ggxBackingValueUsd)}</p>
-                        </div>
-                      )}
-                      <div className="mt-1 pt-1 border-t border-white/10">
-                        <div className="flex justify-between items-center">
-                          <p className="text-xs text-gray-400">ERAGE Price</p>
-                          <a 
-                            href={`https://app.uniswap.org/swap?inputCurrency=ETH&outputCurrency=${CONTRACTS.GGX}&chain=base`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-[10px] text-[#10B981] hover:text-[#34D399] flex items-center gap-0.5 transition-colors"
-                          >
-                            Swap <ArrowUpRight size={10} />
-                          </a>
-                        </div>
-                        <p className="text-lg font-semibold text-[#10B981]">
-                          {prices.ggxPrice > 0 
-                            ? `$${formatPrice(prices.ggxPrice * prices.ethPriceUsd)}` 
-                            : ggxBackingValueUsd > 0 
-                              ? `$${formatPrice(ggxBackingValueUsd)}` 
-                              : '—'}
-                        </p>
-                        {prices.ggxPrice > 0 && (
-                          <p className="text-[10px] text-gray-500">
-                            {formatPrice(prices.ggxPrice)} ETH
-                          </p>
-                        )}
-                      </div>
+                    <p className="signal-number font-mono font-black leading-none mt-1">
+                      {priceEfficiencyRatio !== null ? <RatchetNumber value={priceEfficiencyRatio.toFixed(3)} /> : '—.———'}
+                    </p>
+                  </div>
+                  {/* Zone bar + needle */}
+              <div className="relative pt-3 pb-1">
+                <div className="zone-bar">
+                  {([
+                    { key: 'red', label: 'Buy → Redeem', lo: GAUGE_MIN, hi: RED_ZONE, bg: 'linear-gradient(90deg, #7f1d1d, #EF4444)' },
+                    { key: 'blue', label: 'Neutral', lo: RED_ZONE, hi: GREEN_ZONE, bg: 'linear-gradient(90deg, #1e3a8a, #3B82F6, #1e3a8a)' },
+                    { key: 'green', label: 'Mint → Sell', lo: GREEN_ZONE, hi: GAUGE_MAX, bg: 'linear-gradient(90deg, #10B981, #065f46)' },
+                  ] as const).map((z) => (
+                    <div
+                      key={z.key}
+                      className={`zone-seg ${signal?.zone === z.key ? 'is-active' : ''}`}
+                      style={{ width: `${((z.hi - z.lo) / (GAUGE_MAX - GAUGE_MIN)) * 100}%`, background: z.bg }}
+                    >
+                      <span>{z.label}</span>
                     </div>
-                    
-                    {/* Combined ESHARE & RAGE Backing */}
-                    <div className="relative group">
-                      <div className="absolute inset-0 bg-gradient-to-br from-[#8B5CF6]/30 to-[#EF4444]/30 rounded-xl opacity-30 blur-lg" />
-                      <div className="relative stat-card rounded-xl bg-gradient-to-br from-white/8 to-[#1a1a1c]/90 border border-white/6 p-2 h-full flex flex-col transition-all duration-300 hover:brightness-110 hover:border-white/12">
-                        <div>
-                          <p className="text-[10px] text-gray-400 uppercase tracking-wider mb-1">Protocol Backing</p>
-                          
-                          {/* ESHARE Row */}
-                          <div className="flex items-center mb-0.5">
-                            <div className="flex items-center gap-1">
-                              <img src="/eshare-logo.webp" className="w-4 sm:w-5 h-4 sm:h-5 rounded object-cover" alt="ESHARE" />
-                              <span className="text-[10px] sm:text-xs font-semibold text-[#8B5CF6]">ESHARE</span>
-                            </div>
-                            <span className="text-base font-semibold ml-auto">{backingBalances ? formatNum(backingBalances[0]) : '—'}</span>
-                          </div>
-                          
-                          {/* RAGE Row */}
-                          <div className="flex items-center mb-0.5">
-                            <div className="flex items-center gap-1">
-                              <img src="/rage-logo.webp" className="w-4 sm:w-5 h-4 sm:h-5 rounded object-cover" alt="RAGE" />
-                              <span className="text-[10px] sm:text-xs font-semibold text-[#DC2626]">RAGE</span>
-                            </div>
-                            <span className="text-base font-semibold ml-auto">{backingBalances ? formatNum(backingBalances[1]) : '—'}</span>
-                          </div>
-                        </div>
-                        
-                        {/* Burnt Section */}
-                        <div className="pt-1 border-t border-white/10">
-                          <p className="text-sm text-gray-400 text-center mb-1 font-semibold">🔥 Burnt 🔥</p>
-                          <div className="flex flex-col gap-0.5 text-[13px]">
-                            <div className="flex items-center gap-1">
-                              <img src="/eshare-logo.webp" className="w-4 h-4 rounded object-cover shrink-0" alt="ESHARE" />
-                              <div className="flex gap-1 w-full"><span className="text-[#8B5CF6] font-semibold w-[50px]">ESHARE</span><span className="text-[#8B5CF6] font-semibold ml-auto">{burntAmounts.eshare > 0n ? <RatchetNumber value={formatNum(burntAmounts.eshare)} /> : '—'}</span></div>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <img src="/rage-logo.webp" className="w-4 h-4 rounded object-cover shrink-0" alt="RAGE" />
-                              <div className="flex gap-1 w-full"><span className="text-[#DC2626] font-semibold w-[50px]">RAGE</span><span className="text-[#DC2626] font-semibold ml-auto">{burntAmounts.rage > 0n ? <RatchetNumber value={formatNum(burntAmounts.rage)} /> : '—'}</span></div>
-                            </div>
-                          </div>
-                        </div>
-                        
-                        {/* Protocol TVL at bottom - single line */}
-                        {backingBalances && prices.ethPriceUsd > 0 && (
-                          <div className="mt-auto pt-1 border-t border-white/10">
-                            <p className="text-sm font-semibold text-[#FFD700] text-center whitespace-nowrap flex items-center justify-center gap-1">
-                              <span>Protocol TVL</span>
-                              <RatchetNumber className="font-mono" value={`$${Math.ceil(tvl.total).toLocaleString('en-US')}`} />
-                            </p>
-                          </div>
-                        )}
+                  ))}
+                </div>
+                {priceEfficiencyRatio !== null && (
+                  <div
+                    className="gauge-needle"
+                    style={{ left: `${Math.min(100, Math.max(0, ((priceEfficiencyRatio - GAUGE_MIN) / (GAUGE_MAX - GAUGE_MIN)) * 100))}%` }}
+                  />
+                )}
+              </div>
+
+                </div>
+
+                {/* Row 2: recommendation */}
+                <div className="mt-2">
+              {/* Recommendation */}
+              <div className="min-w-0">
+                {signal ? (
+                  <>
+                    <p className="text-[12.5px] uppercase tracking-[0.2em] font-bold" style={{ color: 'var(--zone)' }}>
+                      {signal.label} · <span className={signal.pct >= 0 ? 'text-[#10B981]' : 'text-[#EF4444]'}>{signal.pctStr}</span>
+                    </p>
+                    <p className="signal-title font-black tracking-tight leading-tight">{signal.title}</p>
+                    <p className="text-[11px] text-gray-400 leading-snug mt-0.5">{signal.body}</p>
+                    {signal.zone === 'green' && (
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        <button onClick={() => selectMode('ETH')} className="px-3 py-1.5 rounded-lg text-xs font-semibold btn-primary">Mint ERAGE</button>
+                        <a href={`https://app.uniswap.org/swap?inputCurrency=${CONTRACTS.GGX}&outputCurrency=ETH&chain=base`} target="_blank" rel="noopener noreferrer" className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-white/15 bg-white/5 hover:bg-white/10 inline-flex items-center gap-1">Sell on Uniswap <ArrowUpRight size={12} /></a>
+                      </div>
+                    )}
+                    {signal.zone === 'red' && (
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        <a href={`https://app.uniswap.org/swap?inputCurrency=ETH&outputCurrency=${CONTRACTS.GGX}&chain=base`} target="_blank" rel="noopener noreferrer" className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-[#EF4444] hover:bg-[#EF4444]/85 inline-flex items-center gap-1">Buy on Uniswap <ArrowUpRight size={12} /></a>
+                        <button onClick={() => selectMode('GGX')} className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-white/15 bg-white/5 hover:bg-white/10">Redeem ERAGE</button>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-sm text-gray-500">Reading live prices…</p>
+                )}
+              </div>
+                </div>
+
+                {/* Row 3: three pods — price vs backing | the ratchet | APRs */}
+                <div className="signal-pods mt-3">
+                  {/* Price vs backing */}
+                  <div className="pod flex items-center justify-center">
+                    <div className="flex items-end justify-center gap-4">
+                      <div className="text-center">
+                        <p className="text-[11px] text-gray-400">Uniswap</p>
+                        <p className="text-lg font-black text-[#10B981] leading-tight">{prices.ggxPrice > 0 ? `$${formatPrice(prices.ggxPrice * prices.ethPriceUsd)}` : '—'}</p>
+                      </div>
+                      <span className={`pod-vs ${signal ? (signal.pct >= 0 ? 'is-up' : 'is-down') : ''}`}>{signal ? signal.pctStr : '·'}</span>
+                      <div className="text-center">
+                        <p className="text-[11px] text-gray-400">Backing</p>
+                        <p className="text-lg font-black text-[#FFD700] leading-tight">{ggxBackingValueUsd > 0 ? `$${formatPrice(ggxBackingValueUsd)}` : '—'}</p>
                       </div>
                     </div>
                   </div>
-                  
-                  {/* Ratio Chart with Time Range Buttons - grows to match mint/redeem box on desktop, natural height on mobile */}
-                  <div className="lg:flex-1 card rounded-xl p-2 flex flex-col lg:min-h-0" style={{ minHeight: '200px' }}>
-                    <div className="flex items-center justify-between mb-1">
-                      <div>
-                        <h3 className="text-xs sm:text-sm font-semibold flex items-center gap-1.5 flex-wrap">
-                          <span className="w-2 h-2 rounded-full bg-[#10B981]"></span>
-                          Price Efficiency UniSwap/Mint:{' '}
-                          {priceEfficiencyRatio !== null && (
-                            <span className="text-[#10B981]">{priceEfficiencyRatio.toFixed(3)}</span>
-                          )}
-                        </h3>
-                      </div>
-                      {/* Time Range Buttons */}
-                      <div className="flex gap-1">
-                        {(['4h', '1d', '1w'] as TimeRange[]).map((range) => (
-                          <button
-                            key={range}
-                            onClick={() => setTimeRange(range)}
-                            className={`px-2 py-0.5 text-[10px] rounded transition-all ${
-                              timeRange === range 
-                                ? 'bg-[#FF6B35] text-white' 
-                                : 'bg-white/10 text-gray-400 hover:bg-white/20'
-                            }`}
-                          >
-                            {range}
-                          </button>
-                        ))}
-                      </div>
+
+                  {/* The ratchet */}
+                  <div className="pod" style={{ ['--tile' as string]: '#FF6B35' } as React.CSSProperties}>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="pod-label">The Ratchet</p>
+                      <span className="tile-chip chip-up"><span className="chip-arrow" aria-hidden="true">▲</span> only goes up</span>
                     </div>
-                    <div className="lg:flex-1 min-h-[120px] lg:min-h-[80px]">
-                      <RatioChart history={backingRatioHistory} priceEfficiencyHistory={priceEfficiencyHistory} timeRange={timeRange} currentRatio={priceEfficiencyRatio} />
+                    <div className="flex items-end justify-between gap-2 mt-1">
+                      <p className="text-2xl font-black font-mono text-[#FF9A5C] ratio-glow leading-none">
+                        <RatchetNumber value={formatRatio(backingRatio?.[0] && backingRatio?.[1] ? (backingRatio[0] + backingRatio[1]) : undefined)} />
+                      </p>
+                      <p className="text-xs text-gray-300 flex items-center gap-1">
+                        <img src="/eshare-logo.webp" className="w-5 h-5 rounded object-cover" alt="" /><span className="font-bold">+</span><img src="/rage-logo.webp" className="w-5 h-5 rounded object-cover" alt="" /> per ERAGE
+                      </p>
                     </div>
-                    {/* Strategy Guide */}
-                    <div className="mt-1 pt-1 border-t border-white/5 text-[10px] sm:text-xs text-gray-400">
-                      <p className="text-sm text-[#FFD700] font-bold mb-0.5 text-center">Arbitrage Strategies</p>
-                      <div className="flex flex-col gap-0.5">
-                        <div className="flex items-start gap-1.5 whitespace-nowrap"><span className="inline-block w-2 h-2 rounded-full bg-[#10B981] mt-0.5 shrink-0"></span><span className="text-[#10B981]">Green Zone Efficiency</span><span className="text-gray-400">: MINT ERAGE <span className="text-[#10B981]">(cheaper)</span> → Sell on UniSwap</span></div>
-                        <div className="flex items-start gap-1.5 whitespace-nowrap"><span className="inline-block w-2 h-2 rounded-full bg-[#3B82F6] mt-0.5 shrink-0"></span><span className="text-[#3B82F6]">Neutral Zone Efficiency</span><span className="text-gray-400">: MINT ERAGE or Hold</span></div>
-                        <div className="flex items-start gap-1.5 whitespace-nowrap"><span className="inline-block w-2 h-2 rounded-full bg-[#EF4444] mt-0.5 shrink-0"></span><span className="text-[#EF4444]">Red Zone Efficiency</span><span className="text-gray-400">: BUY on UniSwap <span className="text-[#10B981]">(cheaper)</span> → Redeem</span></div>
+                  </div>
+
+                  {/* APRs */}
+                  <div className="pod">
+                    <p className="pod-label pod-label-strong text-center">Backing APR</p>
+                    <div className="grid grid-cols-3 gap-1 mt-1">
+                      <div className="text-left">
+                        <p className="text-[11px] text-gray-400">48H</p>
+                        <p className="text-lg font-black text-[#10B981] leading-tight">{estimatedAPR !== null ? <span className="animate-apr-glow" style={{ animationDuration: '0.6s' }}>~{Math.round(estimatedAPR.rate)}%</span> : <span className="text-gray-600 text-xs font-medium">…</span>}</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-[11px] text-gray-400">30D</p>
+                        <p className="text-lg font-black text-[#10B981] leading-tight">{estimated30dAPR !== null ? <span className="animate-apr-glow">~{estimated30dAPR.rate.toFixed(1)}%</span> : <span className="text-gray-600 text-xs font-medium">…</span>}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[11px] text-gray-400">90D</p>
+                        <p className="text-lg font-black text-[#10B981] leading-tight">{estimated90dAPR !== null ? <span className="animate-apr-glow" style={{ animationDuration: '1.6s' }}>~{estimated90dAPR.rate.toFixed(1)}%</span> : <span className="text-gray-600 text-xs font-medium">…</span>}</p>
                       </div>
                     </div>
                   </div>
                 </div>
+              </div>
+            </div>
 
-                {/* Right Column - Unified Action Box */}
-                <div className="col-span-12 lg:col-span-7 flex flex-col gap-2 lg:min-h-0 lg:overflow-y-auto">
-                  <div className={`lg:flex-1 card rounded-xl p-2 flex flex-col lg:min-h-0 relative ${isLoading ? 'tx-live' : ''} ${txFlash ? 'tx-done' : ''}`}>
+            {/* ---------- PROTOCOL STATS ---------- */}
+            <div
+              className="tile lg:col-span-4 flex flex-col rise"
+              onMouseMove={spotlight}
+              style={{ ['--tile' as string]: '#FFD700', ['--rise-delay' as string]: '80ms' } as React.CSSProperties}
+            >
+              <div className="flex items-center justify-between">
+                <p className="tile-label">Protocol Stats</p>
+                <button onClick={() => setShowAdmin(true)} className="text-[13px] text-[#FFD700]/80 hover:text-[#FFD700] inline-flex items-center gap-0.5">TVL breakdown <ArrowUpRight size={11} /></button>
+              </div>
+
+              {/* TVL hero */}
+              <div className="flex items-end justify-between gap-2 mt-1">
+                <div>
+                  <p className="text-[12.5px] text-gray-400">Total value locked</p>
+                  <p className="text-[2rem] font-black font-mono text-[#FFD700] leading-none tvl-glow">
+                    {tvl.total > 0 ? <RatchetNumber value={`$${Math.ceil(tvl.total).toLocaleString('en-US')}`} /> : '—'}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[12.5px] text-gray-400 flex items-center justify-end gap-1">Supply {isPaused && <span className="text-[10px] text-[#EF4444] font-semibold">PAUSED</span>}</p>
+                  <p className="text-base font-bold font-mono">{formatNum(ggxSupply)} <span className="text-[#FF8A5C]">ERAGE</span></p>
+                </div>
+              </div>
+
+              {/* Reserves | Burnt — side by side */}
+              <div className="grid grid-cols-2 gap-2 mt-2">
+                <div className="stat-well">
+                  <p className="sub-label text-center">Reserves</p>
+                  <div className="space-y-1 mt-1">
+                    <div className="flex items-center gap-1.5">
+                      <img src="/eshare-logo.webp" className="w-[18px] h-[18px] rounded object-cover" alt="" />
+                      <span className="text-[12.5px] font-semibold text-[#A78BFA]">ESHARE</span>
+                      <span className="ml-auto text-base font-bold font-mono">{backingBalances ? formatNum(backingBalances[0]) : '—'}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <img src="/rage-logo.webp" className="w-[18px] h-[18px] rounded object-cover" alt="" />
+                      <span className="text-[12.5px] font-semibold text-[#F87171]">RAGE</span>
+                      <span className="ml-auto text-base font-bold font-mono">{backingBalances ? formatNum(backingBalances[1]) : '—'}</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="stat-well stat-well-fire">
+                  <p className="sub-label sub-label-fire flex items-center justify-center gap-1"><Flame size={12} className="text-[#F97316] flame-flicker" /> Burnt forever</p>
+                  <div className="space-y-1 mt-1">
+                    <div className="flex items-center gap-1.5">
+                      <img src="/eshare-logo.webp" className="w-[18px] h-[18px] rounded object-cover" alt="" />
+                      <span className="text-[12.5px] font-semibold text-[#A78BFA]">ESHARE</span>
+                      <span className="ml-auto text-base font-bold font-mono text-[#A78BFA]">{burntAmounts.eshare > 0n ? <RatchetNumber value={formatNum(burntAmounts.eshare)} /> : '—'}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <img src="/rage-logo.webp" className="w-[18px] h-[18px] rounded object-cover" alt="" />
+                      <span className="text-[12.5px] font-semibold text-[#F87171]">RAGE</span>
+                      <span className="ml-auto text-base font-bold font-mono text-[#F87171]">{burntAmounts.rage > 0n ? <RatchetNumber value={formatNum(burntAmounts.rage)} /> : '—'}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* HyperDriver staking */}
+              <div className="mt-auto pt-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[15px] text-gray-200 inline-flex items-center gap-1.5">
+                    <img src="/hyperdriver-logo.png" className="w-7 h-7 rounded-lg object-cover hd-logo" alt="" /> Staked on{' '}
+                    <a href={HYPERDRIVER_ERAGE_URL} target="_blank" rel="noopener noreferrer" className="inline-link font-bold">HyperDriver</a>
+                  </span>
+                  <span className="text-xl font-black font-mono text-[#56E3FF] hd-pct">{hyperdriverStakedPct !== null ? <RatchetNumber value={`${hyperdriverStakedPct.toFixed(1)}%`} /> : '—'}</span>
+                </div>
+                <div className="h-2.5 rounded-full bg-white/10 mt-1.5 overflow-hidden">
+                  <div className="h-full rounded-full stake-fill" style={{ width: `${Math.min(100, hyperdriverStakedPct ?? 0)}%` }} />
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* ===== ACTION + SWAP (fills the rest of the screen on desktop) ===== */}
+          <section className="grid grid-cols-12 gap-2 lg:flex-1 lg:min-h-0">
+            <div
+              ref={actionRef}
+              className={`forge-card col-span-12 lg:col-span-5 rounded-2xl p-3 relative flex flex-col scroll-mt-4 lg:min-h-0 lg:overflow-y-auto rise ${isLoading ? 'tx-live' : ''} ${txFlash ? 'tx-done' : ''}`}
+              style={{
+                ['--rise-delay' as string]: '300ms',
+                ['--mode' as string]: inputToken === 'ETH' ? '#FF6B35' : inputToken === 'ESHARE_RAGE' ? '#8B5CF6' : '#3B82F6',
+              } as React.CSSProperties}
+            >
                     <div className="shrink-0 space-y-1">
                       {(() => {
                         const modes = [
@@ -3122,9 +2675,15 @@ export default function Dashboard() {
                         const active = modes[activeIdx]
                         return (
                           <div>
-                            <div className="grid grid-cols-3 gap-2 mb-0.5">
+                            <div className="grid grid-cols-3 gap-2 mb-1">
                               {modes.map((m) => (
-                                <p key={m.id} className="text-[13px] font-semibold text-center" style={{ color: m.groupColor }}>{m.group}</p>
+                                <p
+                                  key={m.id}
+                                  className={`mode-group ${inputToken === m.id ? 'is-active' : ''}`}
+                                  style={{ ['--g' as string]: m.groupColor } as React.CSSProperties}
+                                >
+                                  {m.group}
+                                </p>
                               ))}
                             </div>
                             <div role="tablist" aria-label="Mint or redeem" className="relative grid grid-cols-3 gap-2">
@@ -3134,8 +2693,8 @@ export default function Dashboard() {
                                 style={{
                                   width: 'calc((100% - 1rem) / 3)',
                                   transform: `translateX(calc(${activeIdx} * (100% + 0.5rem)))`,
-                                  background: active.color,
-                                  boxShadow: `0 4px 18px ${active.color}55`,
+                                  background: `linear-gradient(135deg, ${active.color}, color-mix(in srgb, ${active.color} 65%, #000))`,
+                                  boxShadow: `0 6px 22px ${active.color}66, inset 0 1px 0 rgba(255,255,255,0.25)`,
                                 }}
                               />
                               {modes.map((m) => {
@@ -3146,11 +2705,20 @@ export default function Dashboard() {
                                     role="tab"
                                     aria-selected={isActive}
                                     onClick={() => { setInputToken(m.id); setInputAmount(''); setEshareInput(''); setRageInput(''); }}
-                                    className={`relative z-10 w-full py-2 rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1 ${
-                                      isActive ? 'text-white border border-transparent' : 'bg-white/5 text-gray-400 hover:text-white border border-white/10'
+                                    className={`mode-tab relative z-10 w-full py-2.5 rounded-lg text-[13px] font-bold transition-colors flex items-center justify-center gap-1.5 ${
+                                      isActive ? 'is-active text-white border border-transparent' : 'bg-white/5 text-gray-400 hover:text-white border border-white/10'
                                     }`}
+                                    style={{ ['--c' as string]: m.color } as React.CSSProperties}
                                   >
-                                    {m.id === 'ETH' && <Zap size={12} />} {m.label}
+                                    {m.id === 'ETH' && <Zap size={14} />}
+                                    {m.id === 'ESHARE_RAGE' && (
+                                      <span className="flex -space-x-1">
+                                        <img src="/eshare-logo.webp" className="w-4 h-4 rounded object-cover ring-1 ring-black/40" alt="" />
+                                        <img src="/rage-logo.webp" className="w-4 h-4 rounded object-cover ring-1 ring-black/40" alt="" />
+                                      </span>
+                                    )}
+                                    {m.id === 'GGX' && <img src="/ERAGE-logo.webp" className="w-4 h-4 rounded object-cover" alt="" />}
+                                    {m.label}
                                   </button>
                                 )
                               })}
@@ -3159,11 +2727,11 @@ export default function Dashboard() {
                         )
                       })()}
 
-                      {/* Separator line under tabs */}
-                      <div className="mt-0.5 border-t border-white/10"></div>
-                      
+                      {/* "You pay" label */}
+                      <p className="forge-step mt-2">{inputToken === 'GGX' ? 'You redeem' : 'You pay'}</p>
+
                       {/* Input Section — fixed min-height keeps layout stable across tab switches */}
-                      <div className="mt-0.5 min-h-[52px]">
+                      <div className="mt-1 min-h-[52px]">
                       {inputToken === 'ESHARE_RAGE' ? (
                         // Dual input for ESHARE + RAGE — stacked on mobile, row on desktop
                         <div className="flex flex-col sm:flex-row gap-2">
@@ -3171,7 +2739,7 @@ export default function Dashboard() {
                             <div className="bg-[#8B5CF6]/10 rounded-lg px-2 sm:px-3 py-2 text-sm font-medium flex items-center border border-[#8B5CF6]/20 shrink-0">
                               <img src="/eshare-logo.webp" className="w-5 h-5 rounded object-cover" alt="ES" />
                             </div>
-                            <div className="flex-1 relative bg-[#8B5CF6]/5 border border-[#8B5CF6]/20 rounded-lg px-3 py-2">
+                            <div className="forge-field flex-1 relative bg-[#8B5CF6]/5 border border-[#8B5CF6]/20 rounded-lg px-3 py-2">
                               <input 
                                 type="number" 
                                 value={eshareInput} 
@@ -3190,22 +2758,27 @@ export default function Dashboard() {
                                   }
                                 }} 
                                 placeholder="0.00" 
-                                className="w-full bg-transparent text-base font-mono focus:outline-none" 
+                                className="w-[calc(100%-100px)] bg-transparent text-base font-mono focus:outline-none" 
                               />
-                              <button 
-                                onClick={fillMaxPair}
-                                title="Largest ESHARE + RAGE pair your wallet can mint"
-                                className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[#8B5CF6] hover:text-[#A78BFA] font-medium"
-                              >
-                                MAX
-                              </button>
+                              <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                                {eshareInput && parseFloat(eshareInput) > 0 && prices.esharePrice > 0 && prices.ethPriceUsd > 0 && (
+                                  <span className="text-[13px] font-semibold text-[#10B981] shrink-0">${(parseFloat(eshareInput) * prices.esharePrice * prices.ethPriceUsd).toFixed(2)}</span>
+                                )}
+                                <button
+                                  onClick={fillMaxPair}
+                                  title="Largest ESHARE + RAGE pair your wallet can mint"
+                                  className="text-xs font-bold text-[#A78BFA] hover:text-white"
+                                >
+                                  MAX
+                                </button>
+                              </div>
                             </div>
                           </div>
                           <div className="flex gap-2 flex-1">
                             <div className="bg-[#EF4444]/10 rounded-lg px-2 sm:px-3 py-2 text-sm font-medium flex items-center border border-[#EF4444]/20 shrink-0">
                               <img src="/rage-logo.webp" className="w-5 h-5 rounded object-cover" alt="RA" />
                             </div>
-                            <div className="flex-1 relative bg-[#EF4444]/5 border border-[#EF4444]/20 rounded-lg px-3 py-2">
+                            <div className="forge-field flex-1 relative bg-[#EF4444]/5 border border-[#EF4444]/20 rounded-lg px-3 py-2">
                               <input 
                                 type="number" 
                                 value={rageInput} 
@@ -3224,15 +2797,20 @@ export default function Dashboard() {
                                   }
                                 }} 
                                 placeholder="0.00" 
-                                className="w-full bg-transparent text-base font-mono focus:outline-none" 
+                                className="w-[calc(100%-100px)] bg-transparent text-base font-mono focus:outline-none" 
                               />
-                              <button 
-                                onClick={fillMaxPair}
-                                title="Largest ESHARE + RAGE pair your wallet can mint"
-                                className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[#EF4444] hover:text-[#F87171] font-medium"
-                              >
-                                MAX
-                              </button>
+                              <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                                {rageInput && parseFloat(rageInput) > 0 && prices.ragePrice > 0 && (
+                                  <span className="text-[13px] font-semibold text-[#10B981] shrink-0">${(parseFloat(rageInput) * (prices.ragePriceInUsdc ? prices.ragePrice : prices.ragePrice * prices.ethPriceUsd)).toFixed(2)}</span>
+                                )}
+                                <button
+                                  onClick={fillMaxPair}
+                                  title="Largest ESHARE + RAGE pair your wallet can mint"
+                                  className="text-xs font-bold text-[#F87171] hover:text-white"
+                                >
+                                  MAX
+                                </button>
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -3244,17 +2822,17 @@ export default function Dashboard() {
                               {inputToken === 'GGX' && <span className="text-[#3B82F6]">ERAGE</span>}
                             </div>
                             
-                            <div className="flex-1 relative bg-[#141416]/90 border border-white/10 rounded-lg px-3 py-2">
+                            <div className="forge-field flex-1 relative bg-[#141416]/90 border border-white/10 rounded-lg px-3 py-2">
                               <input 
                                 type="number" 
                                 value={inputAmount} 
                                 onChange={(e) => setInputAmount(e.target.value)} 
                                 placeholder="0.00" 
-                                className="w-[calc(100%-90px)] bg-transparent text-base font-mono focus:outline-none" 
+                                className="w-[calc(100%-110px)] bg-transparent text-base font-mono focus:outline-none" 
                               />
                               <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-2">
                                 {inputAmount && parseFloat(inputAmount) > 0 && (
-                                  <span className="text-[11px] text-[#10B981] shrink-0">
+                                  <span className="text-[13px] font-semibold text-[#10B981] shrink-0">
                                     {inputToken === 'ETH' && prices.ethPriceUsd > 0 
                                       ? `$${(parseFloat(inputAmount) * prices.ethPriceUsd).toFixed(2)}`
                                       : inputToken === 'GGX' && prices.ggxPriceUsd > 0
@@ -3278,7 +2856,7 @@ export default function Dashboard() {
                                       setInputAmount(selectedBalance.toString())
                                     }
                                   }}
-                                  className="text-[10px] text-[#FF6B35] hover:text-[#FF8A5C] font-medium"
+                                  className="text-xs font-bold text-[#FF8A5C] hover:text-white"
                                 >
                                   MAX
                                 </button>
@@ -3289,90 +2867,93 @@ export default function Dashboard() {
                       )}
                       </div>
 
+                      {/* Single chevron: input → output */}
+                      <div className="forge-flow forge-flow-single" aria-hidden="true"><span /></div>
+
                       {/* Output Preview - fixed min-height prevents layout shift on tab switch */}
-                      <div className="mt-0.5 min-h-[28px]">
+                      <div className="mt-0.5 min-h-[40px]">
                       {inputToken === 'GGX' ? (
                         // Redeem output
                         redeemOutput ? (
-                          <div className="bg-[#141416]/80 rounded-lg px-2 py-0.5">
+                          <div className="forge-receipt rounded-lg px-2.5 py-2">
                             <div className="flex items-center justify-between">
-                              <p className="text-[10px] text-gray-400">You Receive</p>
+                              <p className="text-[12px] text-gray-400">You Receive</p>
                               <div className="flex items-center gap-2">
-                                <span className="text-xs font-semibold text-[#8B5CF6]">{formatNum(redeemOutput[0])} ESHARE</span>
-                                <span className="text-xs font-semibold text-[#EF4444]">{formatNum(redeemOutput[1])} RAGE</span>
+                                <span className="text-sm font-semibold text-[#8B5CF6]">{formatNum(redeemOutput[0])} ESHARE</span>
+                                <span className="text-sm font-semibold text-[#EF4444]">{formatNum(redeemOutput[1])} RAGE</span>
                                 {prices.esharePrice > 0 && prices.ethPriceUsd > 0 && prices.ragePrice > 0 && (
-                                  <span className="text-[10px] text-gray-400">${(parseFloat(formatUnits(redeemOutput[0], 18)) * prices.esharePrice * prices.ethPriceUsd + parseFloat(formatUnits(redeemOutput[1], 18)) * prices.ragePrice).toFixed(2)}</span>
+                                  <span className="text-[13px] font-semibold text-[#10B981]">${(parseFloat(formatUnits(redeemOutput[0], 18)) * prices.esharePrice * prices.ethPriceUsd + parseFloat(formatUnits(redeemOutput[1], 18)) * (prices.ragePriceInUsdc ? prices.ragePrice : prices.ragePrice * prices.ethPriceUsd)).toFixed(2)}</span>
                                 )}
                               </div>
                             </div>
                           </div>
                         ) : (
-                          <div className="bg-[#141416]/80 rounded-lg px-2 py-0.5">
+                          <div className="forge-receipt rounded-lg px-2.5 py-2">
                             <div className="flex items-center justify-between">
-                              <p className="text-[10px] text-gray-400">You Receive</p>
+                              <p className="text-[12px] text-gray-400">You Receive</p>
                               {isFetchingRedeemOutput && inputAmount && parseFloat(inputAmount) > 0 ? (
                                 <div className="flex items-center gap-1">
-                                  <div className="w-2.5 h-2.5 border border-[#10B981] border-t-transparent rounded-full animate-spin" />
-                                  <p className="text-[10px] text-gray-500">Calculating...</p>
+                                  <div className="w-3 h-3 border border-[#10B981] border-t-transparent rounded-full animate-spin" />
+                                  <p className="text-[12px] text-gray-500">Calculating...</p>
                                 </div>
                               ) : (
-                                <p className="text-xs font-semibold text-[#10B981]">—</p>
+                                <p className="text-sm font-semibold text-[#10B981]">—</p>
                               )}
                             </div>
                           </div>
                         )
                       ) : (
                         // Mint output
-                        <div className="bg-[#141416]/80 rounded-lg px-2 py-0.5">
+                        <div className="forge-receipt rounded-lg px-2.5 py-2">
                           {inputToken === 'ESHARE_RAGE' && mintOutputEshare && (
                             <div className="flex items-center justify-between">
                               <div className="flex items-center gap-1.5">
-                                <p className="text-[10px] text-gray-400">You Receive (est.)</p>
-                                <p className="text-xs font-semibold text-[#10B981]">~ {formatNum(mintOutputEshare[0])} ERAGE</p>
+                                <p className="text-[12px] text-gray-400">You Receive (est.)</p>
+                                <p className="text-sm font-semibold text-[#10B981]">~ {formatNum(mintOutputEshare[0])} ERAGE</p>
                               </div>
                               {prices.ggxPriceUsd > 0 && (
-                                <p className="text-[10px] text-[#10B981]">${(parseFloat(formatUnits(mintOutputEshare[0], 18)) * prices.ggxPriceUsd).toFixed(2)}</p>
+                                <p className="text-[12px] text-[#10B981]">${(parseFloat(formatUnits(mintOutputEshare[0], 18)) * prices.ggxPriceUsd).toFixed(2)}</p>
                               )}
                             </div>
                           )}
                           {inputToken === 'ESHARE_RAGE' && !mintOutputEshare && isFetchingMintOutput && eshareInput && parseFloat(eshareInput) > 0 && (
                             <div className="flex items-center gap-1">
-                              <p className="text-[10px] text-gray-400">You Receive (est.)</p>
-                              <div className="w-2.5 h-2.5 border border-[#10B981] border-t-transparent rounded-full animate-spin" />
-                              <p className="text-[10px] text-gray-500">Calculating...</p>
+                              <p className="text-[12px] text-gray-400">You Receive (est.)</p>
+                              <div className="w-3 h-3 border border-[#10B981] border-t-transparent rounded-full animate-spin" />
+                              <p className="text-[12px] text-gray-500">Calculating...</p>
                             </div>
                           )}
                           {inputToken === 'ESHARE_RAGE' && !mintOutputEshare && !isFetchingMintOutput && (
                             <div className="flex items-center gap-1.5">
-                              <p className="text-[10px] text-gray-400">You Receive (est.)</p>
-                              <p className="text-xs font-semibold text-gray-500">—</p>
+                              <p className="text-[12px] text-gray-400">You Receive (est.)</p>
+                              <p className="text-sm font-semibold text-gray-500">—</p>
                             </div>
                           )}
                           {inputToken === 'ETH' && estimatedGgxFromEth && (
                             <div className="flex items-center justify-between">
                               <div className="flex items-center gap-1.5">
-                                <p className="text-[10px] text-gray-400">You Receive (est.)</p>
-                                <p className="text-xs font-semibold text-[#10B981]">~ {estimatedGgxFromEth.toFixed(4)} ERAGE</p>
+                                <p className="text-[12px] text-gray-400">You Receive (est.)</p>
+                                <p className="text-sm font-semibold text-[#10B981]">~ {estimatedGgxFromEth.toFixed(4)} ERAGE</p>
                               </div>
                               <div className="flex items-center gap-1.5">
                                 {prices.ggxPriceUsd > 0 && (
-                                  <p className="text-[10px] text-[#10B981]">${(estimatedGgxFromEth * prices.ggxPriceUsd).toFixed(2)}</p>
+                                  <p className="text-[12px] text-[#10B981]">${(estimatedGgxFromEth * prices.ggxPriceUsd).toFixed(2)}</p>
                                 )}
-                                <p className="text-[9px] text-[#F59E0B]">incl. 0.69% zap fee</p>
+                                <p className="text-[11px] text-[#F59E0B]">incl. 0.69% zap fee</p>
                               </div>
                             </div>
                           )}
                           {inputToken === 'ETH' && !estimatedGgxFromEth && inputAmount && parseFloat(inputAmount) > 0 && (
                             <div className="flex items-center gap-1">
-                              <p className="text-[10px] text-gray-400">You Receive (est.)</p>
-                              <div className="w-2.5 h-2.5 border border-[#10B981] border-t-transparent rounded-full animate-spin" />
-                              <p className="text-[10px] text-gray-500">Fetching price...</p>
+                              <p className="text-[12px] text-gray-400">You Receive (est.)</p>
+                              <div className="w-3 h-3 border border-[#10B981] border-t-transparent rounded-full animate-spin" />
+                              <p className="text-[12px] text-gray-500">Fetching price...</p>
                             </div>
                           )}
                           {inputToken === 'ETH' && !estimatedGgxFromEth && (!inputAmount || parseFloat(inputAmount) === 0) && (
                             <div className="flex items-center gap-1.5">
-                              <p className="text-[10px] text-gray-400">You Receive (est.)</p>
-                              <p className="text-xs font-semibold text-gray-500">—</p>
+                              <p className="text-[12px] text-gray-400">You Receive (est.)</p>
+                              <p className="text-sm font-semibold text-gray-500">—</p>
                             </div>
                           )}
                         </div>
@@ -3380,43 +2961,6 @@ export default function Dashboard() {
                       </div>
                       
                       {/* V3 Route Info for ETH - removed as requested */}
-                      
-                      {/* All Balances */}
-                      {isConnected ? (
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 text-sm">
-                        <div className="relative bg-[#141416]/80 rounded-lg py-1.5 px-2 border border-[#FF6B35]/15">
-                          <a href={`https://app.uniswap.org/swap?inputCurrency=${CONTRACTS.USDC}&outputCurrency=${CONTRACTS.WETH}&chain=base`} target="_blank" rel="noopener noreferrer" className="absolute top-1 right-1.5 text-[9px] text-gray-400/60 hover:text-gray-300 flex items-center gap-0.5 transition-colors">Swap <ArrowUpRight size={8} /></a>
-                          <p className="text-xs text-gray-400 text-center">ETH</p>
-                          <p className="font-mono text-[13px] sm:text-sm text-center leading-tight">{ethBal ? parseFloat(formatUnits(ethBal.value, ethBal.decimals)).toFixed(4) : '0.0000'}</p>
-                          <p className="text-[11px] text-[#10B981] text-center leading-tight">{ethBal && prices.ethPriceUsd > 0 ? `$${(parseFloat(formatUnits(ethBal.value, ethBal.decimals)) * prices.ethPriceUsd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}</p>
-                        </div>
-                        <div className="relative bg-[#141416]/80 rounded-lg py-1.5 px-2 border border-[#FF6B35]/15">
-                          <CopyAddr address={CONTRACTS.ESHARE} color="#8B5CF6" />
-                          <a href={`https://app.uniswap.org/swap?inputCurrency=ETH&outputCurrency=${CONTRACTS.ESHARE}&chain=base`} target="_blank" rel="noopener noreferrer" className="absolute top-1 right-1.5 text-[9px] text-[#8B5CF6]/60 hover:text-[#8B5CF6] flex items-center gap-0.5 transition-colors">Swap <ArrowUpRight size={8} /></a>
-                          <p className="text-xs text-[#8B5CF6] text-center">ESHARE</p>
-                          <p className="font-mono text-[13px] sm:text-sm text-center leading-tight">{formatNum(eshareBal)}</p>
-                          <p className="text-[11px] text-[#10B981] text-center leading-tight">{eshareBal && prices.esharePrice > 0 && prices.ethPriceUsd > 0 ? `$${(parseFloat(formatUnits(eshareBal, 18)) * prices.esharePrice * prices.ethPriceUsd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}</p>
-                        </div>
-                        <div className="relative bg-[#141416]/80 rounded-lg py-1.5 px-2 border border-[#FF6B35]/15">
-                          <CopyAddr address={CONTRACTS.RAGE} color="#EF4444" />
-                          <a href={`https://app.uniswap.org/swap?inputCurrency=ETH&outputCurrency=${CONTRACTS.RAGE}&chain=base`} target="_blank" rel="noopener noreferrer" className="absolute top-1 right-1.5 text-[9px] text-[#EF4444]/60 hover:text-[#EF4444] flex items-center gap-0.5 transition-colors">Swap <ArrowUpRight size={8} /></a>
-                          <p className="text-xs text-[#EF4444] text-center">RAGE</p>
-                          <p className="font-mono text-[13px] sm:text-sm text-center leading-tight">{formatNum(rageBal)}</p>
-                          <p className="text-[11px] text-[#10B981] text-center leading-tight">{rageBal && prices.ragePrice > 0 ? `$${(parseFloat(formatUnits(rageBal, 18)) * prices.ragePrice).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}</p>
-                        </div>
-                        <div className="relative bg-[#141416]/80 rounded-lg py-1.5 px-2 border border-[#FF6B35]/15">
-                          <CopyAddr address={CONTRACTS.GGX} color="#FF6B35" />
-                          <a href={`https://app.uniswap.org/swap?inputCurrency=ETH&outputCurrency=${CONTRACTS.GGX}&chain=base`} target="_blank" rel="noopener noreferrer" className="absolute top-1 right-1.5 text-[9px] text-[#FF6B35]/60 hover:text-[#FF6B35] flex items-center gap-0.5 transition-colors">Swap <ArrowUpRight size={8} /></a>
-                          <p className="text-xs text-[#FF6B35] text-center">ERAGE</p>
-                          <p className="font-mono text-[13px] sm:text-sm text-center leading-tight">{formatNum(ggxBal)}</p>
-                          <p className="text-[11px] text-[#10B981] text-center leading-tight">{ggxBal && prices.ggxPriceUsd > 0 ? `$${(parseFloat(formatUnits(ggxBal, 18)) * prices.ggxPriceUsd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}</p>
-                        </div>
-                      </div>
-                      ) : (
-                      <div className="text-center py-2 px-3 bg-white/5 rounded-lg border border-white/10">
-                        <p className="text-xs text-gray-400">Connect wallet to view your balances</p>
-                      </div>
-                      )}
                       
                       {/* Slippage / Redeem info — always renders to keep action button stable */}
                       <div className="space-y-1">
@@ -3457,7 +3001,7 @@ export default function Dashboard() {
                                 {inputToken === 'ETH' && (
                                   inputAmount && parseFloat(inputAmount) > 0 && parseFloat(inputAmount) < 0.003
                                     ? <span className="text-[#F59E0B]">Very small zaps can fail — fees eat most of it. Try 0.003 ETH or more.</span>
-                                    : 'Recommended: 1 ETH or less per mint.'
+                                    : 'Recommended: 0.5 ETH or less per mint.'
                                 )}
                                 {inputToken === 'ESHARE_RAGE' && 'Mint ERAGE with 1:1 ESHARE+RAGE'}
                               </>
@@ -3511,7 +3055,7 @@ export default function Dashboard() {
                               (!eshareInput || parseFloat(eshareInput) === 0) && 
                               (!rageInput || parseFloat(rageInput) === 0))
                           } 
-                          className={`w-full py-2.5 rounded-lg text-sm font-semibold disabled:opacity-50 ${
+                          className={`forge-cta w-full py-2.5 rounded-lg text-sm font-semibold disabled:opacity-50 ${
                             inputToken === 'GGX'
                               ? 'bg-[#3B82F6] hover:bg-[#3B82F6]/80'
                               : 'btn-primary'
@@ -3520,38 +3064,102 @@ export default function Dashboard() {
                           {actionButtonText}
                         </button>
                       )}
-                    </div>
 
-                    {/* Widget + Logo side by side — tall min-height on mobile (natural scroll), flex-1 on desktop (viewport-locked) */}
-                    <div className="flex flex-col border-t border-white/10 pt-1.5 mt-1 flex-1 min-h-[620px] lg:min-h-0">
-                      <div className="flex-1 flex gap-2 items-stretch min-h-0">
-                        <div className="flex-1 min-w-0 min-h-0">
-                          <UniswapWidget ggxAddress={CONTRACTS.GGX} />
+                      {/* ===== YOUR WALLET ===== */}
+                      <div className="wallet-panel mt-7">
+                        <div className="flex items-center justify-between mb-1.5">
+                          <p className="wallet-panel-title"><Wallet size={13} /> Your Wallet</p>
+                          {isConnected && address && (
+                            <span className="text-[10px] font-mono text-gray-400">{address.slice(0, 6)}…{address.slice(-4)}</span>
+                          )}
                         </div>
-                        {/* Logo play area. Fixed width (a bit wider than before, so the swap widget
-                            gives up a little room); overflow-hidden keeps the logo and its babies
-                            inside, which also stops the card's bottom edge from shifting */}
-                        <div className="relative hidden sm:flex shrink-0 self-stretch items-start justify-center overflow-hidden sm:w-36 lg:w-[300px] pt-6 lg:pt-12">
-                          <BouncingLogo className="w-16 h-16 sm:w-20 sm:h-20 lg:w-48 lg:h-48 object-contain opacity-90 will-change-transform" />
-                        </div>
+                      {isConnected ? (
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-sm">
+                        {([
+                          {
+                            key: 'eth', label: 'ETH', color: '#9CA3AF',
+                            icon: <span className="w-4 h-4 rounded-full bg-white/10 flex items-center justify-center text-[10px] font-bold text-gray-200">Ξ</span>,
+                            amount: ethBal ? parseFloat(formatUnits(ethBal.value, ethBal.decimals)).toFixed(4) : '0.0000',
+                            usd: ethBal && prices.ethPriceUsd > 0 ? parseFloat(formatUnits(ethBal.value, ethBal.decimals)) * prices.ethPriceUsd : null,
+                          },
+                          {
+                            key: 'es', label: 'ESHARE', color: '#A78BFA',
+                            icon: <img src="/eshare-logo.webp" className="w-4 h-4 rounded object-cover" alt="" />,
+                            amount: formatNum(eshareBal),
+                            usd: eshareBal && prices.esharePrice > 0 && prices.ethPriceUsd > 0 ? parseFloat(formatUnits(eshareBal, 18)) * prices.esharePrice * prices.ethPriceUsd : null,
+                          },
+                          {
+                            key: 'ra', label: 'RAGE', color: '#F87171',
+                            icon: <img src="/rage-logo.webp" className="w-4 h-4 rounded object-cover" alt="" />,
+                            amount: formatNum(rageBal),
+                            usd: rageBal && prices.ragePrice > 0 ? parseFloat(formatUnits(rageBal, 18)) * (prices.ragePriceInUsdc ? prices.ragePrice : prices.ragePrice * prices.ethPriceUsd) : null,
+                          },
+                          {
+                            key: 'erage', label: 'ERAGE', color: '#FF8A5C',
+                            icon: <img src="/ERAGE-logo.webp" className="w-4 h-4 rounded object-cover" alt="" />,
+                            amount: ggxBal ? parseFloat(formatUnits(ggxBal, 18)).toFixed(4) : '0.0000',
+                            usd: ggxBal && prices.ggxPriceUsd > 0 ? parseFloat(formatUnits(ggxBal, 18)) * prices.ggxPriceUsd : null,
+                          },
+                        ]).map((b) => (
+                          <div key={b.key} className="wallet-box" style={{ ['--tok' as string]: b.color } as React.CSSProperties}>
+                            <p className="flex items-center justify-center gap-1 text-[11px] font-semibold" style={{ color: b.color }}>{b.icon}{b.label}</p>
+                            <p className="font-mono text-[13px] sm:text-sm text-center leading-tight mt-0.5">{b.amount}</p>
+                            <p className="text-[11px] text-[#10B981] text-center leading-tight">
+                              {b.usd !== null ? `$${b.usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
+                            </p>
+                          </div>
+                        ))}
                       </div>
-                      {/* Links row — always visible, never clipped */}
-                      <div className="shrink-0 flex items-center justify-end text-[11px] text-gray-500 pt-1 border-t border-white/5">
-                        <div className="flex items-center gap-2.5">
-                          <a href="https://t.me/+ZDuHXsPY1Jg3MmU5" target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 hover:text-white transition-colors"><MessageCircle size={11} /> Telegram</a>
-                          <a href="/ERAGE_Whitepaper_v2.pdf" target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 hover:text-white transition-colors"><FileText size={11} /> Docs</a>
-                          <a href="https://ultraroundmoney.com" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">UltraRound</a>
-                          <a href="https://plazm.io" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Plazm</a>
-                          <a href="https://fusion.emp.money" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Fusion</a>
-                        </div>
+                      ) : (
+                      <div className="text-center py-2 px-3 bg-white/5 rounded-lg border border-white/10">
+                        <p className="text-xs text-gray-400">Connect wallet to view your balances</p>
+                      </div>
+                      )}
                       </div>
                     </div>
-                  </div>
+              {/* Merch — pinned to the very bottom of the card */}
+              <div className="flex justify-center mt-auto pt-3">
+                <a
+                  href="https://mothershipswag.com/collections/erage"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="merch-link group"
+                >
+                  <Shirt size={14} className="shrink-0 transition-transform group-hover:-rotate-12 group-hover:scale-110" />
+                  <span>Shop ERAGE Merch</span>
+                  <ArrowUpRight size={12} className="shrink-0 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+                </a>
+              </div>
+            </div>
+
+            <div className="swap-card col-span-12 lg:col-span-7 rounded-2xl p-2 flex flex-col lg:min-h-0 rise" style={{ ['--rise-delay' as string]: '360ms' } as React.CSSProperties}>
+              <div className="flex-1 flex flex-col lg:flex-row gap-2 items-stretch min-h-0">
+                <div className="swap-frame h-[600px] lg:h-auto lg:flex-1 min-w-0 min-h-0">
+                  <UniswapWidget ggxAddress={CONTRACTS.GGX} />
+                </div>
+                {/* Logo play area ("the forge") — overflow-hidden keeps the logo and its babies inside */}
+                <div className="arena relative flex shrink-0 w-full h-56 lg:h-auto lg:w-[220px] lg:self-stretch items-start justify-center overflow-hidden pt-5 lg:pt-8 rounded-xl">
+                  <div className="arena-grid" aria-hidden="true" />
+                  <div className="arena-floor" aria-hidden="true" />
+                  <BouncingLogo className="w-24 h-24 lg:w-36 lg:h-36 object-contain opacity-90" />
                 </div>
               </div>
-              
+              {/* Links */}
+              <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 text-[11px] text-gray-500 pt-1.5 mt-1 border-t border-white/5 px-1">
+                <span className="hidden sm:inline">ERAGE · World’s first dual-backed ratchet token on Base</span>
+                <div className="flex items-center gap-3">
+                  <a href="https://t.me/+ZDuHXsPY1Jg3MmU5" target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 hover:text-white transition-colors"><MessageCircle size={11} /> Telegram</a>
+                  <a href="/ERAGE_Whitepaper_v2.pdf" target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 hover:text-white transition-colors"><FileText size={11} /> Docs</a>
+                  <a href="https://ultraroundmoney.com" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">UltraRound</a>
+                  <a href="https://plazm.io" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Plazm</a>
+                  <a href="https://fusion.emp.money" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Fusion</a>
+                </div>
+              </div>
+            </div>
+          </section>
+
               {/* User Info Panel — visible for all connected wallets */}
-              {isConnected && !isAdmin && showAdmin && (
+              {!isAdmin && showAdmin && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setShowAdmin(false)}>
                   {/* Backdrop */}
                   <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
@@ -3566,18 +3174,22 @@ export default function Dashboard() {
                   </div>
                   
                   <div className="p-3 space-y-3">
+                    {isConnected && (
+                    <>
                     {/* Burn ERAGE */}
                     <div className="bg-white/5 rounded-lg p-2 space-y-2">
-                      <p className="text-[10px] text-[#F97316] uppercase">Burn ERAGE</p>
+                      <p className="text-[12px] text-[#F97316] uppercase">Burn ERAGE</p>
                       <input type="number" value={burnErageAmount} onChange={(e) => setBurnErageAmount(e.target.value)} placeholder="Amount to burn" className="w-full bg-white/5 border border-white/10 rounded px-2 py-1 text-xs" />
-                      <button onClick={handleBurnERAGE} disabled={!burnErageAmount || parseFloat(burnErageAmount) <= 0 || isLoading} className="w-full py-1 text-[10px] bg-[#F97316]/20 text-[#F97316] rounded border border-[#F97316]/30 disabled:opacity-50 flex items-center justify-center gap-1"><Flame size={10} /> Burn</button>
-                      <p className="text-[9px] text-gray-500">Your balance: {ggxBal ? formatNum(ggxBal) : '—'} ERAGE</p>
+                      <button onClick={handleBurnERAGE} disabled={!burnErageAmount || parseFloat(burnErageAmount) <= 0 || isLoading} className="w-full py-1 text-[12px] bg-[#F97316]/20 text-[#F97316] rounded border border-[#F97316]/30 disabled:opacity-50 flex items-center justify-center gap-1"><Flame size={10} /> Burn</button>
+                      <p className="text-[11px] text-gray-500">Your balance: {ggxBal ? formatNum(ggxBal) : '—'} ERAGE</p>
                     </div>
 
+                    </>
+                    )}
                     {/* Tax Summary */}
                     <div className="bg-white/5 rounded-lg p-2 space-y-1">
-                      <p className="text-[10px] text-gray-400 uppercase">Tax Summary (v5 — Slippage Protected + 48h Timelock)</p>
-                      <div className="grid grid-cols-2 gap-1 text-[9px]">
+                      <p className="text-[12px] text-gray-400 uppercase">Tax Summary (v5 — Slippage Protected + 48h Timelock)</p>
+                      <div className="grid grid-cols-2 gap-1 text-[11px]">
                         <div className="bg-[#10B981]/10 rounded p-1">
                           <span className="text-[#10B981]">Fixed:</span> {fixedBackingTaxBps?.toString() || '13'} BPS ({((Number(fixedBackingTaxBps || 13)) / 100).toFixed(2)}%)
                         </div>
@@ -3591,19 +3203,19 @@ export default function Dashboard() {
                           <span className="text-[#EF4444]">RA Burn:</span> {rageBurnTaxBps?.toString() || '69'} BPS ({((Number(rageBurnTaxBps || 69)) / 100).toFixed(2)}%)
                         </div>
                       </div>
-                      <div className="mt-1 pt-1 border-t border-white/10 flex justify-between items-center text-[9px]">
+                      <div className="mt-1 pt-1 border-t border-white/10 flex justify-between items-center text-[11px]">
                         <span className="text-gray-400">Total: {totalTaxBps?.toString() || '220'} BPS ({((Number(totalTaxBps || 220)) / 100).toFixed(2)}%)</span>
                         <span className="text-[#FFD700]">Round-trip: {((Number(totalTaxBps || 220)) * 2 / 100).toFixed(1)}%</span>
                       </div>
-                      <p className="text-[9px] text-gray-500">Same tax on mint and redeem — ratio ratchets up both ways</p>
+                      <p className="text-[11px] text-gray-500">Same tax on mint and redeem — ratio ratchets up both ways</p>
                     </div>
 
                     {/* TVL Breakdown */}
                     <div className="bg-white/5 rounded-lg p-2 space-y-1">
-                      <p className="text-[10px] text-gray-400 uppercase">TVL Breakdown</p>
+                      <p className="text-[12px] text-gray-400 uppercase">TVL Breakdown</p>
                       {renderTvlItems('grid-cols-2')}
                       <div className="mt-1 pt-1 border-t border-white/10 flex justify-between items-center">
-                        <span className="text-[10px] text-gray-400">Total TVL:</span>
+                        <span className="text-[12px] text-gray-400">Total TVL:</span>
                         <span className="text-sm font-bold text-[#FFD700]">{tvl.total > 0 ? `$${formatPrice(tvl.total)}` : '—'}</span>
                       </div>
                     </div>
@@ -3623,7 +3235,7 @@ export default function Dashboard() {
                     <div className="flex items-center gap-2">
                       <Shield size={14} className="text-[#F59E0B]" />
                       <span className="text-sm font-semibold text-[#F59E0B]">Admin Console</span>
-                      <span className="text-[10px] text-[#F59E0B]/60 ml-2">Owner: {address?.slice(0, 6)}...{address?.slice(-4)}</span>
+                      <span className="text-[12px] text-[#F59E0B]/60 ml-2">Owner: {address?.slice(0, 6)}...{address?.slice(-4)}</span>
                     </div>
                     <button onClick={() => setShowAdmin(false)} className="text-gray-400 hover:text-white transition-colors p-1 rounded-lg hover:bg-white/10">✕</button>
                   </div>
@@ -3640,70 +3252,70 @@ export default function Dashboard() {
                     {adminTab === 'ggx' && (
                       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
                         <div className="bg-white/5 rounded-lg p-2 space-y-2">
-                          <p className="text-[10px] text-gray-400 uppercase">Protocol Status</p>
+                          <p className="text-[12px] text-gray-400 uppercase">Protocol Status</p>
                           <div className="flex gap-1">
-                            <button onClick={handlePause} disabled={isPaused || isLoading} className="flex-1 py-1.5 text-[10px] bg-[#EF4444]/20 text-[#EF4444] rounded border border-[#EF4444]/30 disabled:opacity-50 flex items-center justify-center gap-1"><Pause size={10} /> Pause</button>
-                            <button onClick={handleUnpause} disabled={!isPaused || isLoading} className="flex-1 py-1.5 text-[10px] bg-[#10B981]/20 text-[#10B981] rounded border border-[#10B981]/30 disabled:opacity-50 flex items-center justify-center gap-1"><Play size={10} /> Unpause</button>
+                            <button onClick={handlePause} disabled={isPaused || isLoading} className="flex-1 py-1.5 text-[12px] bg-[#EF4444]/20 text-[#EF4444] rounded border border-[#EF4444]/30 disabled:opacity-50 flex items-center justify-center gap-1"><Pause size={10} /> Pause</button>
+                            <button onClick={handleUnpause} disabled={!isPaused || isLoading} className="flex-1 py-1.5 text-[12px] bg-[#10B981]/20 text-[#10B981] rounded border border-[#10B981]/30 disabled:opacity-50 flex items-center justify-center gap-1"><Play size={10} /> Unpause</button>
                           </div>
-                          <p className="text-[9px] text-gray-500">Status: {isPaused ? '\uD83D\uDD34 Paused' : '\uD83D\uDFE2 Active'}</p>
-                          <p className="text-[9px] text-gray-500">Mints: {totalMintCount?.toString() || '0'} | Redeems: {totalRedeemCount?.toString() || '0'}</p>
+                          <p className="text-[11px] text-gray-500">Status: {isPaused ? '\uD83D\uDD34 Paused' : '\uD83D\uDFE2 Active'}</p>
+                          <p className="text-[11px] text-gray-500">Mints: {totalMintCount?.toString() || '0'} | Redeems: {totalRedeemCount?.toString() || '0'}</p>
                         </div>
                         
                         <div className="bg-white/5 rounded-lg p-2 space-y-2">
-                          <p className="text-[10px] text-gray-400 uppercase">ERAGE Per Pair</p>
+                          <p className="text-[12px] text-gray-400 uppercase">ERAGE Per Pair</p>
                           <input type="number" value={newRatio} onChange={(e) => setNewRatio(e.target.value)} placeholder={ggxPerPair ? formatRatio(ggxPerPair) : '1.0'} className="w-full bg-white/5 border border-white/10 rounded px-2 py-1 text-xs" />
-                          <button onClick={handleSetRatio} disabled={!newRatio || isLoading} className="w-full py-1 text-[10px] bg-[#F59E0B]/20 text-[#F59E0B] rounded border border-[#F59E0B]/30 disabled:opacity-50">Update</button>
+                          <button onClick={handleSetRatio} disabled={!newRatio || isLoading} className="w-full py-1 text-[12px] bg-[#F59E0B]/20 text-[#F59E0B] rounded border border-[#F59E0B]/30 disabled:opacity-50">Update</button>
                         </div>
                         
                         <div className="bg-white/5 rounded-lg p-2 space-y-2">
-                          <p className="text-[10px] text-[#F97316] uppercase">Burn ERAGE</p>
+                          <p className="text-[12px] text-[#F97316] uppercase">Burn ERAGE</p>
                           <input type="number" value={burnErageAmount} onChange={(e) => setBurnErageAmount(e.target.value)} placeholder="Amount to burn" className="w-full bg-white/5 border border-white/10 rounded px-2 py-1 text-xs" />
-                          <button onClick={handleBurnERAGE} disabled={!burnErageAmount || parseFloat(burnErageAmount) <= 0 || isLoading} className="w-full py-1 text-[10px] bg-[#F97316]/20 text-[#F97316] rounded border border-[#F97316]/30 disabled:opacity-50 flex items-center justify-center gap-1"><Flame size={10} /> Burn</button>
-                          <p className="text-[9px] text-gray-500">Your balance: {ggxBal ? formatNum(ggxBal) : '—'} ERAGE</p>
+                          <button onClick={handleBurnERAGE} disabled={!burnErageAmount || parseFloat(burnErageAmount) <= 0 || isLoading} className="w-full py-1 text-[12px] bg-[#F97316]/20 text-[#F97316] rounded border border-[#F97316]/30 disabled:opacity-50 flex items-center justify-center gap-1"><Flame size={10} /> Burn</button>
+                          <p className="text-[11px] text-gray-500">Your balance: {ggxBal ? formatNum(ggxBal) : '—'} ERAGE</p>
                         </div>
                         
                         <div className="bg-white/5 rounded-lg p-2 space-y-2">
-                          <p className="text-[10px] text-[#10B981] uppercase">Fixed Backing Tax (BPS)</p>
+                          <p className="text-[12px] text-[#10B981] uppercase">Fixed Backing Tax (BPS)</p>
                           <input type="number" value={newFixedBackingTax} onChange={(e) => setNewFixedBackingTax(e.target.value)} placeholder={fixedBackingTaxBps?.toString() || '12'} className="w-full bg-white/5 border border-white/10 rounded px-2 py-1 text-xs" />
-                          <button onClick={handleSetFixedBackingTax} disabled={!newFixedBackingTax || isLoading} className="w-full py-1 text-[10px] bg-[#10B981]/20 text-[#10B981] rounded border border-[#10B981]/30 disabled:opacity-50">Set</button>
-                          <p className="text-[9px] text-gray-500">Current: {fixedBackingTaxBps?.toString() || '12'} (floor creep)</p>
+                          <button onClick={handleSetFixedBackingTax} disabled={!newFixedBackingTax || isLoading} className="w-full py-1 text-[12px] bg-[#10B981]/20 text-[#10B981] rounded border border-[#10B981]/30 disabled:opacity-50">Set</button>
+                          <p className="text-[11px] text-gray-500">Current: {fixedBackingTaxBps?.toString() || '12'} (floor creep)</p>
                         </div>
                         
                         <div className="bg-white/5 rounded-lg p-2 space-y-2">
-                          <p className="text-[10px] text-[#3B82F6] uppercase">Linear Backing Tax (BPS)</p>
+                          <p className="text-[12px] text-[#3B82F6] uppercase">Linear Backing Tax (BPS)</p>
                           <input type="number" value={newLinearBackingTax} onChange={(e) => setNewLinearBackingTax(e.target.value)} placeholder={linearBackingTaxBps?.toString() || '100'} className="w-full bg-white/5 border border-white/10 rounded px-2 py-1 text-xs" />
-                          <button onClick={handleSetLinearBackingTax} disabled={!newLinearBackingTax || isLoading} className="w-full py-1 text-[10px] bg-[#3B82F6]/20 text-[#3B82F6] rounded border border-[#3B82F6]/30 disabled:opacity-50">Set</button>
-                          <p className="text-[9px] text-gray-500">Current: {linearBackingTaxBps?.toString() || '100'} (ratio growth)</p>
+                          <button onClick={handleSetLinearBackingTax} disabled={!newLinearBackingTax || isLoading} className="w-full py-1 text-[12px] bg-[#3B82F6]/20 text-[#3B82F6] rounded border border-[#3B82F6]/30 disabled:opacity-50">Set</button>
+                          <p className="text-[11px] text-gray-500">Current: {linearBackingTaxBps?.toString() || '100'} (ratio growth)</p>
                         </div>
                         
                         <div className="bg-white/5 rounded-lg p-2 space-y-2">
-                          <p className="text-[10px] text-[#8B5CF6] uppercase">ESHARE Burn Tax (BPS)</p>
+                          <p className="text-[12px] text-[#8B5CF6] uppercase">ESHARE Burn Tax (BPS)</p>
                           <input type="number" value={newEshareBurnTax} onChange={(e) => setNewEshareBurnTax(e.target.value)} placeholder={eshareBurnTaxBps?.toString() || '69'} className="w-full bg-white/5 border border-white/10 rounded px-2 py-1 text-xs" />
-                          <button onClick={handleSetEshareBurnTax} disabled={!newEshareBurnTax || isLoading} className="w-full py-1 text-[10px] bg-[#8B5CF6]/20 text-[#8B5CF6] rounded border border-[#8B5CF6]/30 disabled:opacity-50">Set</button>
-                          <p className="text-[9px] text-gray-500">Current: {eshareBurnTaxBps?.toString() || '69'} (deflation)</p>
+                          <button onClick={handleSetEshareBurnTax} disabled={!newEshareBurnTax || isLoading} className="w-full py-1 text-[12px] bg-[#8B5CF6]/20 text-[#8B5CF6] rounded border border-[#8B5CF6]/30 disabled:opacity-50">Set</button>
+                          <p className="text-[11px] text-gray-500">Current: {eshareBurnTaxBps?.toString() || '69'} (deflation)</p>
                         </div>
                         
                         <div className="bg-white/5 rounded-lg p-2 space-y-2">
-                          <p className="text-[10px] text-[#EF4444] uppercase">RAGE Burn Tax (BPS)</p>
+                          <p className="text-[12px] text-[#EF4444] uppercase">RAGE Burn Tax (BPS)</p>
                           <input type="number" value={newRageBurnTax} onChange={(e) => setNewRageBurnTax(e.target.value)} placeholder={rageBurnTaxBps?.toString() || '69'} className="w-full bg-white/5 border border-white/10 rounded px-2 py-1 text-xs" />
-                          <button onClick={handleSetRageBurnTax} disabled={!newRageBurnTax || isLoading} className="w-full py-1 text-[10px] bg-[#EF4444]/20 text-[#EF4444] rounded border border-[#EF4444]/30 disabled:opacity-50">Set</button>
-                          <p className="text-[9px] text-gray-500">Current: {rageBurnTaxBps?.toString() || '69'} (deflation)</p>
+                          <button onClick={handleSetRageBurnTax} disabled={!newRageBurnTax || isLoading} className="w-full py-1 text-[12px] bg-[#EF4444]/20 text-[#EF4444] rounded border border-[#EF4444]/30 disabled:opacity-50">Set</button>
+                          <p className="text-[11px] text-gray-500">Current: {rageBurnTaxBps?.toString() || '69'} (deflation)</p>
                         </div>
                         
                         <div className="col-span-2 bg-white/5 rounded-lg p-2 space-y-2">
-                          <p className="text-[10px] text-gray-400 uppercase">Set All Taxes at Once</p>
+                          <p className="text-[12px] text-gray-400 uppercase">Set All Taxes at Once</p>
                           <div className="grid grid-cols-2 gap-1">
-                            <input type="number" value={newFixedBackingTax} onChange={(e) => setNewFixedBackingTax(e.target.value)} placeholder="Fixed BPS" className="bg-white/5 border border-white/10 rounded px-2 py-1 text-[10px]" />
-                            <input type="number" value={newLinearBackingTax} onChange={(e) => setNewLinearBackingTax(e.target.value)} placeholder="Linear BPS" className="bg-white/5 border border-white/10 rounded px-2 py-1 text-[10px]" />
-                            <input type="number" value={newEshareBurnTax} onChange={(e) => setNewEshareBurnTax(e.target.value)} placeholder="ES Burn BPS" className="bg-white/5 border border-white/10 rounded px-2 py-1 text-[10px]" />
-                            <input type="number" value={newRageBurnTax} onChange={(e) => setNewRageBurnTax(e.target.value)} placeholder="RA Burn BPS" className="bg-white/5 border border-white/10 rounded px-2 py-1 text-[10px]" />
+                            <input type="number" value={newFixedBackingTax} onChange={(e) => setNewFixedBackingTax(e.target.value)} placeholder="Fixed BPS" className="bg-white/5 border border-white/10 rounded px-2 py-1 text-[12px]" />
+                            <input type="number" value={newLinearBackingTax} onChange={(e) => setNewLinearBackingTax(e.target.value)} placeholder="Linear BPS" className="bg-white/5 border border-white/10 rounded px-2 py-1 text-[12px]" />
+                            <input type="number" value={newEshareBurnTax} onChange={(e) => setNewEshareBurnTax(e.target.value)} placeholder="ES Burn BPS" className="bg-white/5 border border-white/10 rounded px-2 py-1 text-[12px]" />
+                            <input type="number" value={newRageBurnTax} onChange={(e) => setNewRageBurnTax(e.target.value)} placeholder="RA Burn BPS" className="bg-white/5 border border-white/10 rounded px-2 py-1 text-[12px]" />
                           </div>
-                          <button onClick={handleSetAllTaxes} disabled={isLoading} className="w-full py-1 text-[10px] bg-[#F59E0B]/20 text-[#F59E0B] rounded border border-[#F59E0B]/30 disabled:opacity-50">Apply All Taxes</button>
+                          <button onClick={handleSetAllTaxes} disabled={isLoading} className="w-full py-1 text-[12px] bg-[#F59E0B]/20 text-[#F59E0B] rounded border border-[#F59E0B]/30 disabled:opacity-50">Apply All Taxes</button>
                         </div>
                         
                         <div className="col-span-2 bg-white/5 rounded-lg p-2 space-y-1">
-                          <p className="text-[10px] text-gray-400 uppercase">Tax Summary (v5 — Slippage Protected + 48h Timelock)</p>
-                          <div className="grid grid-cols-2 gap-1 text-[9px]">
+                          <p className="text-[12px] text-gray-400 uppercase">Tax Summary (v5 — Slippage Protected + 48h Timelock)</p>
+                          <div className="grid grid-cols-2 gap-1 text-[11px]">
                             <div className="bg-[#10B981]/10 rounded p-1">
                               <span className="text-[#10B981]">Fixed:</span> {fixedBackingTaxBps?.toString() || '12'} BPS ({((Number(fixedBackingTaxBps || 12)) / 100).toFixed(2)}%)
                             </div>
@@ -3717,18 +3329,18 @@ export default function Dashboard() {
                               <span className="text-[#EF4444]">RA Burn:</span> {rageBurnTaxBps?.toString() || '69'} BPS ({((Number(rageBurnTaxBps || 69)) / 100).toFixed(2)}%)
                             </div>
                           </div>
-                          <div className="mt-1 pt-1 border-t border-white/10 flex justify-between items-center text-[9px]">
+                          <div className="mt-1 pt-1 border-t border-white/10 flex justify-between items-center text-[11px]">
                             <span className="text-gray-400">Total: {totalTaxBps?.toString() || '250'} BPS ({((Number(totalTaxBps || 250)) / 100).toFixed(2)}%)</span>
                             <span className="text-[#FFD700]">Round-trip: {((Number(totalTaxBps || 250)) * 2 / 100).toFixed(1)}%</span>
                           </div>
-                          <p className="text-[9px] text-gray-500">Same tax on mint and redeem — ratio ratchets up both ways</p>
+                          <p className="text-[11px] text-gray-500">Same tax on mint and redeem — ratio ratchets up both ways</p>
                         </div>
                         
                         <div className="col-span-2 lg:col-span-4 bg-white/5 rounded-lg p-2 space-y-1">
-                          <p className="text-[10px] text-gray-400 uppercase">TVL Breakdown</p>
+                          <p className="text-[12px] text-gray-400 uppercase">TVL Breakdown</p>
                           {renderTvlItems('grid-cols-3 lg:grid-cols-4')}
                           <div className="mt-1 pt-1 border-t border-white/10 flex justify-between items-center">
-                            <span className="text-[10px] text-gray-400">Total TVL:</span>
+                            <span className="text-[12px] text-gray-400">Total TVL:</span>
                             <span className="text-sm font-bold text-[#FFD700]">
                               {backingBalances && prices.ethPriceUsd > 0 ? `$${formatPrice(tvl.total)}` : '—'}
                             </span>
@@ -3740,60 +3352,60 @@ export default function Dashboard() {
                     {adminTab === 'zap' && (
                       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
                         <div className="bg-white/5 rounded-lg p-2 space-y-1">
-                          <p className="text-[10px] text-gray-400 uppercase">V3 Router</p>
-                          <p className="text-[10px] font-mono text-white break-all">{zapRouter ? `${zapRouter.slice(0, 6)}...${zapRouter.slice(-4)}` : '—'}</p>
-                          <p className="text-[9px] text-gray-500 mt-1">Expected: {CONTRACTS.V3_ROUTER.slice(0, 6)}...{CONTRACTS.V3_ROUTER.slice(-4)}</p>
+                          <p className="text-[12px] text-gray-400 uppercase">V3 Router</p>
+                          <p className="text-[12px] font-mono text-white break-all">{zapRouter ? `${zapRouter.slice(0, 6)}...${zapRouter.slice(-4)}` : '—'}</p>
+                          <p className="text-[11px] text-gray-500 mt-1">Expected: {CONTRACTS.V3_ROUTER.slice(0, 6)}...{CONTRACTS.V3_ROUTER.slice(-4)}</p>
                           {zapRouter && zapRouter.toLowerCase() !== CONTRACTS.V3_ROUTER.toLowerCase() && (
-                            <p className="text-[9px] text-[#EF4444]">⚠️ Mismatch!</p>
+                            <p className="text-[11px] text-[#EF4444]">⚠️ Mismatch!</p>
                           )}
                         </div>
                         <div className="bg-white/5 rounded-lg p-2 space-y-1">
-                          <p className="text-[10px] text-gray-400 uppercase">WETH Address</p>
-                          <p className="text-[10px] font-mono text-white break-all">{zapWeth ? `${zapWeth.slice(0, 6)}...${zapWeth.slice(-4)}` : '—'}</p>
-                          <p className="text-[9px] text-gray-500 mt-1">Expected: {CONTRACTS.WETH.slice(0, 6)}...{CONTRACTS.WETH.slice(-4)}</p>
+                          <p className="text-[12px] text-gray-400 uppercase">WETH Address</p>
+                          <p className="text-[12px] font-mono text-white break-all">{zapWeth ? `${zapWeth.slice(0, 6)}...${zapWeth.slice(-4)}` : '—'}</p>
+                          <p className="text-[11px] text-gray-500 mt-1">Expected: {CONTRACTS.WETH.slice(0, 6)}...{CONTRACTS.WETH.slice(-4)}</p>
                           {zapWeth && zapWeth.toLowerCase() !== CONTRACTS.WETH.toLowerCase() && (
-                            <p className="text-[9px] text-[#EF4444]">⚠️ Mismatch!</p>
+                            <p className="text-[11px] text-[#EF4444]">⚠️ Mismatch!</p>
                           )}
                         </div>
                         <div className="bg-white/5 rounded-lg p-2 space-y-1">
-                          <p className="text-[10px] text-gray-400 uppercase">USDC Address</p>
-                          <p className="text-[10px] font-mono text-white break-all">{zapUsdc ? `${zapUsdc.slice(0, 6)}...${zapUsdc.slice(-4)}` : '—'}</p>
-                          <p className="text-[9px] text-gray-500 mt-1">Expected: {CONTRACTS.USDC.slice(0, 6)}...{CONTRACTS.USDC.slice(-4)}</p>
+                          <p className="text-[12px] text-gray-400 uppercase">USDC Address</p>
+                          <p className="text-[12px] font-mono text-white break-all">{zapUsdc ? `${zapUsdc.slice(0, 6)}...${zapUsdc.slice(-4)}` : '—'}</p>
+                          <p className="text-[11px] text-gray-500 mt-1">Expected: {CONTRACTS.USDC.slice(0, 6)}...{CONTRACTS.USDC.slice(-4)}</p>
                           {zapUsdc && zapUsdc.toLowerCase() !== CONTRACTS.USDC.toLowerCase() && (
-                            <p className="text-[9px] text-[#EF4444]">⚠️ Mismatch!</p>
+                            <p className="text-[11px] text-[#EF4444]">⚠️ Mismatch!</p>
                           )}
                         </div>
                         <div className="bg-white/5 rounded-lg p-2 space-y-1">
-                          <p className="text-[10px] text-gray-400 uppercase">ERAGE Address</p>
-                          <p className="text-[10px] font-mono text-white break-all">{zapErage ? `${zapErage.slice(0, 6)}...${zapErage.slice(-4)}` : '—'}</p>
-                          <p className="text-[9px] text-gray-500 mt-1">Expected: {CONTRACTS.GGX.slice(0, 6)}...{CONTRACTS.GGX.slice(-4)}</p>
+                          <p className="text-[12px] text-gray-400 uppercase">ERAGE Address</p>
+                          <p className="text-[12px] font-mono text-white break-all">{zapErage ? `${zapErage.slice(0, 6)}...${zapErage.slice(-4)}` : '—'}</p>
+                          <p className="text-[11px] text-gray-500 mt-1">Expected: {CONTRACTS.GGX.slice(0, 6)}...{CONTRACTS.GGX.slice(-4)}</p>
                           {zapErage && zapErage.toLowerCase() !== CONTRACTS.GGX.toLowerCase() && (
-                            <p className="text-[9px] text-[#EF4444]">⚠️ Mismatch!</p>
+                            <p className="text-[11px] text-[#EF4444]">⚠️ Mismatch!</p>
                           )}
                         </div>
                         <div className="bg-white/5 rounded-lg p-2 space-y-1 col-span-2">
-                          <p className="text-[10px] text-gray-400 uppercase">Admin Wallet (Tax Recipient)</p>
-                          <p className="text-[10px] font-mono text-white break-all">{zapAdminWallet ? `${zapAdminWallet.slice(0, 10)}...${zapAdminWallet.slice(-6)}` : '—'}</p>
-                          <p className="text-[9px] text-gray-500">Receives 0.69% of ETH on every zapFromETH</p>
+                          <p className="text-[12px] text-gray-400 uppercase">Admin Wallet (Tax Recipient)</p>
+                          <p className="text-[12px] font-mono text-white break-all">{zapAdminWallet ? `${zapAdminWallet.slice(0, 10)}...${zapAdminWallet.slice(-6)}` : '—'}</p>
+                          <p className="text-[11px] text-gray-500">Receives 0.69% of ETH on every zapFromETH</p>
                         </div>
                         <div className="bg-white/5 rounded-lg p-2 space-y-1">
-                          <p className="text-[10px] text-gray-400 uppercase">QuoterV2 Address</p>
-                          <p className="text-[10px] font-mono text-white break-all">{zapQuoter ? `${zapQuoter.slice(0, 6)}...${zapQuoter.slice(-4)}` : '—'}</p>
-                          <p className="text-[9px] text-gray-500 mt-1">Expected: {CONTRACTS.QUOTER_V2.slice(0, 6)}...{CONTRACTS.QUOTER_V2.slice(-4)}</p>
+                          <p className="text-[12px] text-gray-400 uppercase">QuoterV2 Address</p>
+                          <p className="text-[12px] font-mono text-white break-all">{zapQuoter ? `${zapQuoter.slice(0, 6)}...${zapQuoter.slice(-4)}` : '—'}</p>
+                          <p className="text-[11px] text-gray-500 mt-1">Expected: {CONTRACTS.QUOTER_V2.slice(0, 6)}...{CONTRACTS.QUOTER_V2.slice(-4)}</p>
                           {zapQuoter && zapQuoter.toLowerCase() !== CONTRACTS.QUOTER_V2.toLowerCase() && (
-                            <p className="text-[9px] text-[#EF4444]">⚠️ Mismatch!</p>
+                            <p className="text-[11px] text-[#EF4444]">⚠️ Mismatch!</p>
                           )}
                         </div>
                         <div className="bg-white/5 rounded-lg p-2 space-y-1">
-                          <p className="text-[10px] text-gray-400 uppercase">Split Config</p>
-                          <p className="text-[10px] font-mono text-white">quoteRefBps: {zapQuoteRefBps ? String(zapQuoteRefBps) : '—'}</p>
-                          <p className="text-[10px] font-mono text-white">rebalanceThreshold: {zapRebalanceThresholdBps ? `${String(zapRebalanceThresholdBps)} bps` : '—'}</p>
-                          <p className="text-[9px] text-gray-500 mt-1">Ref BPS for quoter & rebalance trigger threshold</p>
+                          <p className="text-[12px] text-gray-400 uppercase">Split Config</p>
+                          <p className="text-[12px] font-mono text-white">quoteRefBps: {zapQuoteRefBps ? String(zapQuoteRefBps) : '—'}</p>
+                          <p className="text-[12px] font-mono text-white">rebalanceThreshold: {zapRebalanceThresholdBps ? `${String(zapRebalanceThresholdBps)} bps` : '—'}</p>
+                          <p className="text-[11px] text-gray-500 mt-1">Ref BPS for quoter & rebalance trigger threshold</p>
                         </div>
                         <div className="col-span-2 bg-[#10B981]/10 border border-[#10B981]/20 rounded-lg p-3">
                           <p className="text-xs text-[#10B981] font-medium">✅ V5 Optimized Zap Active — QuoterV2 Intelligent Split + 0.69% ETH Tax</p>
-                          <p className="text-[10px] text-gray-400 mt-1">Price-aware splitting via Uniswap V3 QuoterV2 + optional rebalance pass:</p>
-                          <ul className="text-[10px] text-gray-400 mt-1 list-disc list-inside space-y-0.5">
+                          <p className="text-[12px] text-gray-400 mt-1">Price-aware splitting via Uniswap V3 QuoterV2 + optional rebalance pass:</p>
+                          <ul className="text-[12px] text-gray-400 mt-1 list-disc list-inside space-y-0.5">
                             <li>ETH → ESHARE: Direct via WETH/ESHARE pool ({POOL_FEES.WETH_ESHARE/10000}% fee)</li>
                             <li>ETH → RAGE: WETH → USDC → RAGE ({POOL_FEES.WETH_USDC/10000}% + {POOL_FEES.USDC_RAGE/10000}% fees)</li>
                             <li className="text-[#3B82F6]">QuoterV2: Queries live pool prices to calculate optimal ETH split (no oracle needed)</li>
@@ -3815,7 +3427,7 @@ export default function Dashboard() {
 
                           {/* Rescue non-backing token */}
                           <div className="space-y-1.5">
-                            <p className="text-[10px] text-gray-400 uppercase tracking-wider">Rescue stuck token (not ES/RA/ERAGE)</p>
+                            <p className="text-[12px] text-gray-400 uppercase tracking-wider">Rescue stuck token (not ES/RA/ERAGE)</p>
                             <input type="text" value={rescueToken} onChange={(e) => setRescueToken(e.target.value)} placeholder="Token Address" className="w-full bg-white/5 border border-white/10 rounded px-2 py-1 text-xs" />
                             <input type="number" value={rescueAmount} onChange={(e) => setRescueAmount(e.target.value)} placeholder="Amount (wei)" className="w-full bg-white/5 border border-white/10 rounded px-2 py-1 text-xs" />
                             <button onClick={() => handleRescueToken('ggx')} disabled={!rescueToken || !rescueAmount || isLoading} className="w-full py-2 text-xs bg-[#EF4444]/20 text-[#EF4444] rounded border border-[#EF4444]/30 disabled:opacity-50 flex items-center justify-center gap-1"><Trash2 size={12} /> Rescue Token</button>
@@ -3823,7 +3435,7 @@ export default function Dashboard() {
 
                           {/* v5: 48h timelocked emergency drain */}
                           <div className="pt-2 border-t border-[#EF4444]/20 space-y-1.5">
-                            <p className="text-[10px] text-gray-400 uppercase tracking-wider">48h Timelocked Drain</p>
+                            <p className="text-[12px] text-gray-400 uppercase tracking-wider">48h Timelocked Drain</p>
 
                             {/* Countdown display */}
                             {emergencyDrainExecutableAt && (emergencyDrainExecutableAt as bigint) > 0n ? (
@@ -3836,7 +3448,7 @@ export default function Dashboard() {
                                 const mins = Math.floor((Math.abs(secondsRemaining) % 3600) / 60)
                                 return (
                                   <div className={`rounded p-2 text-center ${isExecutable ? 'bg-[#10B981]/10 border border-[#10B981]/30' : 'bg-[#FFD700]/10 border border-[#FFD700]/30'}`}>
-                                    <p className="text-[10px] uppercase tracking-wider text-gray-400">
+                                    <p className="text-[12px] uppercase tracking-wider text-gray-400">
                                       {isExecutable ? 'READY TO EXECUTE' : 'DRAIN PENDING'}
                                     </p>
                                     <p className={`text-sm font-mono ${isExecutable ? 'text-[#10B981]' : 'text-[#FFD700]'}`}>
@@ -3847,7 +3459,7 @@ export default function Dashboard() {
                               })()
                             ) : (
                               <div className="rounded p-2 text-center bg-white/5 border border-white/10">
-                                <p className="text-[10px] uppercase tracking-wider text-gray-400">No drain pending</p>
+                                <p className="text-[12px] uppercase tracking-wider text-gray-400">No drain pending</p>
                               </div>
                             )}
 
@@ -3883,7 +3495,7 @@ export default function Dashboard() {
                                 <AlertTriangle size={11} /> Execute
                               </button>
                             </div>
-                            <p className="text-[9px] text-gray-500">
+                            <p className="text-[11px] text-gray-500">
                               Initiate → wait 48h → Execute. Users can redeem during the wait window.
                             </p>
                           </div>
@@ -3896,7 +3508,7 @@ export default function Dashboard() {
                             <p className="text-xs font-semibold text-[#EF4444]">ERAGE Zap Emergency (V5 Optimized)</p>
                           </div>
                           <div className="space-y-1.5">
-                            <p className="text-[10px] text-gray-400 uppercase tracking-wider">Rescue stuck token (not ES/RA/ERAGE)</p>
+                            <p className="text-[12px] text-gray-400 uppercase tracking-wider">Rescue stuck token (not ES/RA/ERAGE)</p>
                             <input type="text" value={rescueToken} onChange={(e) => setRescueToken(e.target.value)} placeholder="Token Address" className="w-full bg-white/5 border border-white/10 rounded px-2 py-1 text-xs" />
                             <input type="number" value={rescueAmount} onChange={(e) => setRescueAmount(e.target.value)} placeholder="Amount (wei)" className="w-full bg-white/5 border border-white/10 rounded px-2 py-1 text-xs" />
                             <button onClick={() => handleRescueToken('zap')} disabled={!rescueToken || !rescueAmount || isLoading} className="w-full py-2 text-xs bg-[#EF4444]/20 text-[#EF4444] rounded border border-[#EF4444]/30 disabled:opacity-50 flex items-center justify-center gap-1"><Trash2 size={12} /> Rescue Token</button>
@@ -3909,7 +3521,7 @@ export default function Dashboard() {
                               <DollarSign size={12} /> Rescue ETH
                             </button>
                           </div>
-                          <p className="text-[9px] text-gray-500">Zap is stateless — no timelock needed; balances should be ephemeral.</p>
+                          <p className="text-[11px] text-gray-500">Zap is stateless — no timelock needed; balances should be ephemeral.</p>
                         </div>
                       </div>
                     )}
@@ -3917,7 +3529,6 @@ export default function Dashboard() {
                   </div>
                 </div>
               )}
-            </div>
         </main>
       </div>
 
