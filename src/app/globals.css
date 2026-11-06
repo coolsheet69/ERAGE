@@ -583,7 +583,9 @@
 }
 
 .signal-title {
-  font-size: clamp(1.4rem, 2.2vw, 1.85rem);
+  /* Scales with screen width and never wraps (phones get a smaller size) */
+  font-size: clamp(1rem, 5.2vw, 1.85rem);
+  white-space: nowrap;
   background: linear-gradient(90deg, #fff, color-mix(in srgb, var(--zone) 70%, #fff));
   -webkit-background-clip: text;
   background-clip: text;
@@ -1534,6 +1536,10 @@ input[type="number"] {
    the browser to repaint large areas every frame. Desktop GPUs shrug that off;
    phones drop frames while scrolling. On touch / narrow screens they're turned
    off. Functional motion stays: rolling numbers, the needle, tab slide, babies. */
+@media (min-width: 1024px) {
+  .signal-title { font-size: clamp(1.4rem, 2.2vw, 1.85rem); }
+}
+
 @media (max-width: 1023px), (hover: none) {
   .bg-aurora,
   .signal-card::before,
