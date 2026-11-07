@@ -1,53 +1,60 @@
 import { NextResponse } from 'next/server'
 import { createClient } from 'redis'
+import { createPublicClient, http, fallback, formatUnits } from 'viem'
+import { base } from 'viem/chains'
 
-// ===== KEYS =====
-// The price-efficiency chart moved its ERAGE price feed from the 1% pool to the
-// 0.3% pool. Those two pools differ by a few percent, and the history is built
-// from points that EVERY visitor's browser posts. Browsers still running the old
-// site kept posting 1%-pool values into the same series, so the chart zig-zagged
-// between two levels (e.g. 0.96 ↔ 1.04).
+// ===== SECURITY =====
+// The history was once poisoned: someone posted a fake point dated 2099 with a
+// ratio of 10,000, which blocked every real point from being saved afterwards.
+// Now the server never trusts what a browser sends. On POST it reads the backing
+// ratio straight from the ERAGE contract itself and stamps it with server time,
+// so the only data that can ever be stored is the real on-chain value.
+const ERAGE = '0x328f20857c19cC72b5AeD37b301C129fC2CD8f0A' as const
+const BACKING_RATIO_ABI = [
+  { name: 'getBackingRatio', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: 'esharePerGGX', type: 'uint256' }, { name: 'ragePerGGX', type: 'uint256' }] },
+] as const
+const chain = createPublicClient({
+  chain: base,
+  transport: fallback([http('https://base-rpc.publicnode.com'), http('https://mainnet.base.org')]),
+})
+
+async function readOnchainRatio(): Promise<number> {
+  const [es, ra] = await chain.readContract({ address: ERAGE, abi: BACKING_RATIO_ABI, functionName: 'getBackingRatio' })
+  return parseFloat(formatUnits(es + ra, 18))
+}
+
+// Backing-ratio history for the 48H / 30D APRs — the only thing stored now.
 //
-// Fix: the 0.3%-pool series lives under its own key and its own type ('price03').
-// Old clients still post type 'price' → they write to the OLD key, which nothing
-// reads anymore, so they can't pollute the chart. GET serves the new series to
-// everyone (as `priceHistory`, the field name both old and new clients read).
-const PRICE_KEY_LEGACY = 'erage:priceEfficiency'      // 1% pool feed — retired, write-only for old clients
-const PRICE_KEY = 'erage:priceEfficiency:p03'          // 0.3% pool feed — current
+// The price-efficiency chart was removed from the site. Its price series was what
+// kept filling Redis, so on startup this route deletes those old keys, and any
+// price points still sent by old cached copies of the site are ignored.
+//
+// Storage is kept tiny: one backing point per 30 minutes, 92 days retained
+// (~4,400 points, well under 200 KB). Existing dense history is thinned to that on the next write.
 const BACKING_KEY = 'erage:backingRatio'
-const MAX_POINTS = 20000
-const RETENTION_MS = 7 * 24 * 60 * 60 * 1000
-const MIN_SPACING_MS = 10_000
+const RETIRED_KEYS = ['erage:priceEfficiency', 'erage:priceEfficiency:p03']
+const SPACING_MS = 30 * 60 * 1000
+const RETENTION_MS = 92 * 24 * 60 * 60 * 1000 // enough for the 90D APR
 
-type PointType = 'price' | 'price03' | 'backing'
 type Point = { time: number; ratio: number }
 
-// ===== VALIDATION =====
-// Price efficiency is kept near 1.0 by arbitrage; anything outside 0.5–2.0 is a
-// bad read. (Legacy series keeps its old loose bounds — nothing reads it.)
-function isInvalid(type: PointType, ratio: number): boolean {
-  if (!Number.isFinite(ratio)) return true
-  if (type === 'price03') return ratio < 0.5 || ratio > 2.0
-  if (type === 'price') return ratio < 0.01 || ratio > 100
-  if (type === 'backing') return ratio < 1.0 || ratio > 10000
-  return true
-}
+// Plausible backing ratio range (it starts at 2.0 and only ratchets up slowly)
+const isValidBacking = (r: unknown): r is number =>
+  typeof r === 'number' && Number.isFinite(r) && r >= 1 && r <= 100
 
-function keyFor(type: PointType) {
-  if (type === 'price03') return PRICE_KEY
-  if (type === 'price') return PRICE_KEY_LEGACY
-  return BACKING_KEY
-}
-
-// ===== REDIS (fails fast) =====
-// Previously an unreachable Redis made requests hang for minutes while the client
-// retried forever. Now: 3s connect timeout, 2 retries, then give up and let the
-// route answer with an empty history.
+// ===== Redis (fails fast) =====
 let client: ReturnType<typeof createClient> | null = null
 let connecting: Promise<ReturnType<typeof createClient>> | null = null
+let retiredCleared = false
 
 async function getClient() {
   if (client?.isReady) return client
+  // A client that dropped and gave up reconnecting is dead — close it before making
+  // a new one, so long-running servers don't pile up stale connections.
+  if (client && !client.isReady) {
+    try { client.destroy() } catch { /* already closed */ }
+    client = null
+  }
   if (!process.env.REDIS_URL) throw new Error('REDIS_URL not set')
   if (!connecting) {
     const c = createClient({
@@ -59,30 +66,47 @@ async function getClient() {
     })
     c.on('error', (err) => console.error('Redis error:', err?.code ?? err?.message ?? err))
     connecting = c.connect()
-      .then(() => { client = c; return c })
+      .then(async () => {
+        client = c
+        if (!retiredCleared) {
+          retiredCleared = true
+          // Free the space used by the old price-efficiency chart
+          await c.del(RETIRED_KEYS).catch(() => {})
+        }
+        return c
+      })
       .finally(() => { connecting = null })
   }
   return connecting
 }
 
-function cleanSeries(raw: string | null, type: PointType): Point[] {
-  if (!raw) return []
-  const cutoff = Date.now() - RETENTION_MS
-  let parsed: Point[] = []
-  try { parsed = JSON.parse(raw) } catch { return [] }
-  return parsed
-    .filter((p) => p && p.time > cutoff && !isInvalid(type, p.ratio))
+// Sort, drop invalid/expired points, and keep at most one point per 30 minutes
+function compact(points: Point[]): Point[] {
+  const now = Date.now()
+  const cutoff = now - RETENTION_MS
+  const sorted = points
+    // no points from the future (that's how the history was poisoned), none expired
+    .filter((p) => p && typeof p.time === 'number' && p.time > cutoff && p.time <= now + 60_000 && isValidBacking(p.ratio))
     .sort((a, b) => a.time - b.time)
+  const out: Point[] = []
+  for (const p of sorted) {
+    const last = out[out.length - 1]
+    if (!last || p.time - last.time >= SPACING_MS) out.push(p)
+  }
+  return out
+}
+
+function parse(raw: string | null): Point[] {
+  if (!raw) return []
+  try { return JSON.parse(raw) } catch { return [] }
 }
 
 export async function GET() {
   try {
     const redis = await getClient()
-    const [priceRaw, backingRaw] = await Promise.all([redis.get(PRICE_KEY), redis.get(BACKING_KEY)])
-    return NextResponse.json({
-      priceHistory: cleanSeries(priceRaw, 'price03'),
-      backingHistory: cleanSeries(backingRaw, 'backing'),
-    })
+    const backingHistory = compact(parse(await redis.get(BACKING_KEY)))
+    // priceHistory kept (empty) so old cached copies of the site don't break
+    return NextResponse.json({ priceHistory: [], backingHistory })
   } catch (err) {
     console.error('GET chart-history error:', (err as Error)?.message ?? err)
     return NextResponse.json({ priceHistory: [], backingHistory: [] })
@@ -91,35 +115,25 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
-    const { type, point } = await req.json()
-    if (!point || typeof point.ratio !== 'number') {
-      return NextResponse.json({ ok: false, error: 'invalid_shape' }, { status: 400 })
+    const { type } = await req.json().catch(() => ({ type: undefined }))
+    if (type !== 'backing') {
+      // Price series retired — accept silently so old clients don't retry
+      return NextResponse.json({ ok: true, ignored: true })
     }
-    if (type !== 'price' && type !== 'price03' && type !== 'backing') {
-      return NextResponse.json({ ok: false, error: 'invalid_type' }, { status: 400 })
-    }
-    if (isInvalid(type, point.ratio)) {
-      return NextResponse.json({ ok: false, rejected: 'out_of_bounds' })
-    }
-
     const redis = await getClient()
-    const key = keyFor(type)
-    // Server time, not the browser's clock: visitors with a skewed clock used to
-    // insert points out of order, which also made the line jagged.
     const now = Date.now()
-    const cutoff = now - RETENTION_MS
-
-    const raw = await redis.get(key)
-    let history: Point[] = []
-    try { history = raw ? JSON.parse(raw) : [] } catch { history = [] }
-    history = history.filter((p) => p.time > cutoff)
-
+    const history = compact(parse(await redis.get(BACKING_KEY)))
     const last = history[history.length - 1]
-    if (!last || now - last.time >= MIN_SPACING_MS) {
-      history.push({ time: now, ratio: point.ratio })
-      if (history.length > MAX_POINTS) history = history.slice(-MAX_POINTS)
-      await redis.set(key, JSON.stringify(history))
+    if (last && now - last.time < SPACING_MS) {
+      return NextResponse.json({ ok: true, skipped: 'too_soon' })
     }
+    // The value comes from the chain, not from the request
+    const ratio = await readOnchainRatio()
+    if (!isValidBacking(ratio)) {
+      return NextResponse.json({ ok: false, error: 'onchain_read_invalid' }, { status: 502 })
+    }
+    history.push({ time: now, ratio })
+    await redis.set(BACKING_KEY, JSON.stringify(history))
     return NextResponse.json({ ok: true })
   } catch (err) {
     console.error('POST chart-history error:', (err as Error)?.message ?? err)
@@ -127,30 +141,41 @@ export async function POST(req: Request) {
   }
 }
 
-// DELETE — admin only. Previously anyone on the internet could wipe the chart
-// history with a single request. Now it requires the header
-//   x-admin-key: <CHART_ADMIN_KEY>
-// matching a CHART_ADMIN_KEY environment variable in Vercel. If that variable
-// isn't set, DELETE is disabled entirely.
-//   DELETE /api/chart-history                 → clears current price + backing
-//   DELETE /api/chart-history?type=price      → current price series only
-//   DELETE /api/chart-history?type=backing    → backing only
-//   DELETE /api/chart-history?type=legacy     → old 1%-pool series
+// PUT — admin only: restore / merge backing history from a backup.
+// Header `x-admin-key` must match CHART_ADMIN_KEY. Body: { backingHistory: [{ time, ratio }, ...] }
+// (the exact shape GET returns, so a saved GET response can be sent back as-is).
+// Points are merged with what's already stored, then thinned to 30-minute spacing.
+export async function PUT(req: Request) {
+  const adminKey = process.env.CHART_ADMIN_KEY
+  if (!adminKey || req.headers.get('x-admin-key') !== adminKey) {
+    return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
+  }
+  try {
+    const body = await req.json()
+    const incoming: Point[] = Array.isArray(body?.backingHistory) ? body.backingHistory : []
+    const redis = await getClient()
+    const existing = parse(await redis.get(BACKING_KEY))
+    const merged = compact([...existing, ...incoming])
+    await redis.set(BACKING_KEY, JSON.stringify(merged))
+    return NextResponse.json({ ok: true, before: existing.length, received: incoming.length, stored: merged.length })
+  } catch (err) {
+    console.error('PUT chart-history error:', (err as Error)?.message ?? err)
+    return NextResponse.json({ ok: false }, { status: 500 })
+  }
+}
+
+// DELETE — admin only: header `x-admin-key` must match the CHART_ADMIN_KEY env var
+// (DELETE is disabled if that variable isn't set).
+//   DELETE /api/chart-history  → clears the backing history
 export async function DELETE(req: Request) {
   const adminKey = process.env.CHART_ADMIN_KEY
   if (!adminKey || req.headers.get('x-admin-key') !== adminKey) {
     return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
   }
   try {
-    const type = new URL(req.url).searchParams.get('type')
-    const keys =
-      type === 'price' ? [PRICE_KEY]
-      : type === 'backing' ? [BACKING_KEY]
-      : type === 'legacy' ? [PRICE_KEY_LEGACY]
-      : [PRICE_KEY, BACKING_KEY]
     const redis = await getClient()
-    for (const k of keys) await redis.del(k)
-    return NextResponse.json({ ok: true, cleared: keys })
+    await redis.del([BACKING_KEY, ...RETIRED_KEYS])
+    return NextResponse.json({ ok: true })
   } catch (err) {
     console.error('DELETE chart-history error:', (err as Error)?.message ?? err)
     return NextResponse.json({ ok: false }, { status: 500 })
