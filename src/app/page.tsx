@@ -697,15 +697,33 @@ function BouncingLogo({ className }: { className: string }) {
       return null
     }
 
+    // Layout is measured only when it can change (resize / scroll), never inside
+    // the animation loop — reading element sizes every frame forced the browser to
+    // recalculate styles 60× a second, which is what made slow machines stutter.
+    const geo = { left: 0, top: 0, w: 0, h: 0, home: { x: 0, y: 0 }, base: 0 }
+    const measure = () => {
+      const zr = zone.getBoundingClientRect()
+      geo.left = zr.left
+      geo.top = zr.top
+      geo.w = zr.width
+      geo.h = zr.height
+      geo.home = logoCenter(zr)
+      geo.base = el.offsetWidth
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(zone)
+    window.addEventListener('scroll', measure, { passive: true, capture: true })
+    window.addEventListener('resize', measure)
+
     const frame = (t: number) => {
       const dt = lastT ? Math.min((t - lastT) / 16.67, 3) : 1
       lastT = t
-      const zr = zone.getBoundingClientRect()
-      const zw = zr.width
-      const zh = zr.height
-      const home = logoCenter(zr)
-      const vis = el.offsetWidth * scale
-      const p = pointer ? toLocal(pointer.x, pointer.y, zr) : null
+      const zw = geo.w
+      const zh = geo.h
+      const home = geo.home
+      const vis = geo.base * scale
+      const p = pointer ? { x: pointer.x - (geo.left + zw / 2), y: pointer.y - (geo.top + zh / 2) } : null
 
       // ---- Big logo: size spring + shake ----
       scaleVel = (scaleVel + (scaleTargetNow() - scale) * 0.16 * dt) * Math.pow(0.72, dt)
@@ -893,7 +911,7 @@ function BouncingLogo({ className }: { className: string }) {
     }
 
     const spawnBaby = (src: string, side: number, from: { x: number; y: number }, now: number) => {
-      const base = el.offsetWidth
+      const base = geo.base || el.offsetWidth
       const size = Math.max(14, base * (0.13 + Math.random() * 0.04))
       const node = document.createElement('img')
       node.src = src
@@ -901,7 +919,7 @@ function BouncingLogo({ className }: { className: string }) {
       Object.assign(node.style, {
         position: 'absolute', left: '0', top: '0', width: `${size}px`, height: `${size}px`,
         borderRadius: '6px', objectFit: 'cover', willChange: 'transform',
-        boxShadow: '0 2px 8px rgba(0,0,0,0.45)',
+        // (no box-shadow: shadows re-paint on every move; transform-only stays on the GPU)
       })
       layer.appendChild(node)
       babies.push({
@@ -1030,6 +1048,9 @@ function BouncingLogo({ className }: { className: string }) {
     return () => {
       cancelAnimationFrame(raf)
       clearInterval(autoTimer)
+      ro.disconnect()
+      window.removeEventListener('scroll', measure, { capture: true })
+      window.removeEventListener('resize', measure)
       zone.removeEventListener('pointerdown', onPointerDown)
       zone.removeEventListener('pointerenter', onMove)
       zone.removeEventListener('pointermove', onMove)
@@ -1109,6 +1130,16 @@ export default function Dashboard() {
     }
   }, [])
   
+  // Lite mode: on modest hardware (≤4 CPU threads or ≤4 GB RAM, as reported by the
+  // browser) use the same calm visuals phones get — static glows instead of
+  // continuously animated edges, sweeps and pulses.
+  useEffect(() => {
+    const nav = navigator as Navigator & { deviceMemory?: number }
+    const threads = nav.hardwareConcurrency ?? 8
+    const memory = nav.deviceMemory ?? 8
+    if (threads <= 4 || memory <= 4) document.documentElement.classList.add('lite')
+  }, [])
+
   // Freeze CSS animations while the tab is in the background
   useEffect(() => {
     const sync = () => document.documentElement.classList.toggle('tab-hidden', document.hidden)
@@ -2035,10 +2066,21 @@ export default function Dashboard() {
   }, [priceEfficiencyRatio])
 
   // Cursor spotlight on the stat cards
+  // Throttled to one update per animation frame (mousemove can fire far faster),
+  // and skipped entirely in lite mode.
+  const spotlightRaf = useRef(0)
   const spotlight = (e: React.MouseEvent<HTMLElement>) => {
-    const r = e.currentTarget.getBoundingClientRect()
-    e.currentTarget.style.setProperty('--mx', `${e.clientX - r.left}px`)
-    e.currentTarget.style.setProperty('--my', `${e.clientY - r.top}px`)
+    if (document.documentElement.classList.contains('lite')) return
+    const target = e.currentTarget
+    const x = e.clientX
+    const y = e.clientY
+    if (spotlightRaf.current) return
+    spotlightRaf.current = requestAnimationFrame(() => {
+      spotlightRaf.current = 0
+      const r = target.getBoundingClientRect()
+      target.style.setProperty('--mx', `${x - r.left}px`)
+      target.style.setProperty('--my', `${y - r.top}px`)
+    })
   }
 
   // Jump to the action box in a given mode (used by the signal buttons)

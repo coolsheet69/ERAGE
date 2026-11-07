@@ -1571,3 +1571,36 @@ input[type="number"] {
 
   .zone-seg span { letter-spacing: 0.08em; font-size: 9.5px; }
 }
+
+/* ============ LITE MODE (modest desktops) ============ */
+/* Same calm visuals as phones, switched on by page.tsx when the browser reports
+   ≤4 CPU threads or ≤4 GB RAM. */
+html.lite .bg-aurora,
+html.lite .signal-card::before,
+html.lite .signal-sheen,
+html.lite .swap-card::before,
+html.lite .forge-card::before,
+html.lite .forge-receipt::after,
+html.lite .forge-cta::after,
+html.lite .mode-tab.is-active::after,
+html.lite .zone-seg.is-active::after,
+html.lite .arena-grid,
+html.lite .stake-fill,
+html.lite .chip-up,
+html.lite .chip-up::after,
+html.lite .logo-breathe,
+html.lite .animate-pulse-glow,
+html.lite .hd-bolt,
+html.lite .flame-flicker,
+html.lite .gradient-text-animated {
+  animation: none !important;
+}
+
+html.lite .logo-breathe { filter: drop-shadow(0 0 14px rgba(255, 107, 53, 0.45)); }
+html.lite .signal-card::before { --sig-angle: 40deg; }
+html.lite .swap-card::before { --swap-angle: 40deg; }
+html.lite .tile::before { display: none; }
+html.lite .signal-card,
+html.lite .tile,
+html.lite .forge-card,
+html.lite .swap-card { contain: paint; }
