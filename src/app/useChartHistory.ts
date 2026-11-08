@@ -2,129 +2,87 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 
+// Backing-ratio history, used only for the 48H / 30D / 90D APR figures.
+//
+// The price-efficiency chart (and its price history) was removed: it was the bulk
+// of the Redis storage. The backing ratio only ever ratchets up slowly, so the
+// server keeps one point per 30 minutes for 92 days (~4,400 points).
+// This client sends at most one point every 10 minutes; the server drops anything
+// closer than 30 minutes to the previous point.
+
 type HistoryPoint = { time: number; ratio: number }
 
-interface ChartHistoryState {
-  priceEfficiencyHistory: HistoryPoint[]
-  backingRatioHistory: HistoryPoint[]
-  historyLoaded: boolean
-  addPriceEfficiencyPoint: (ratio: number) => void
-  addBackingRatioPoint: (ratio: number) => void
-}
+const HISTORY_TIMEOUT_MS = 8000
+const POST_INTERVAL_MS = 10 * 60 * 1000
 
-// How long to wait for saved history before carrying on with live data only.
-// The chart never waits on Redis longer than this.
-const HISTORY_TIMEOUT_MS = 4000
-
-// Minimum spacing between recorded points. While a series has fewer than 2 points
-// (fresh start, or history unavailable) the gap is shortened so the chart can draw
-// its first line within seconds instead of waiting a full interval.
-const PRICE_INTERVAL_MS = 10_000
-const BACKING_INTERVAL_MS = 15_000
-const WARMUP_INTERVAL_MS = 2_000
-
-// Combine saved history with points recorded live while it was loading:
-// sorted by time, duplicates (same or earlier timestamp) dropped.
-function mergeHistory(saved: HistoryPoint[], live: HistoryPoint[]): HistoryPoint[] {
-  const all = [...saved, ...live].sort((a, b) => a.time - b.time)
-  const out: HistoryPoint[] = []
-  for (const p of all) {
-    if (out.length === 0 || p.time > out[out.length - 1].time) out.push(p)
-  }
-  return out
-}
-
-export function useChartHistory(): ChartHistoryState {
-  const [priceEfficiencyHistory, setPriceEfficiencyHistory] = useState<HistoryPoint[]>([])
+export function useChartHistory() {
   const [backingRatioHistory, setBackingRatioHistory] = useState<HistoryPoint[]>([])
   const [historyLoaded, setHistoryLoaded] = useState(false)
+  const lastPostRef = useRef(0)
 
-  // Last accepted point time + series length, tracked in refs so the add functions
-  // can decide synchronously whether to record (and POST) a point.
-  const lastPriceRef = useRef<{ time: number; count: number }>({ time: 0, count: 0 })
-  const lastBackingRef = useRef<{ time: number; count: number }>({ time: 0, count: 0 })
-
-  // Load saved history on mount — with a timeout. Previously, live points were
-  // ignored until this request finished, so a slow or unreachable Redis left the
-  // chart stuck on "Waiting for Uniswap price data..." indefinitely.
+  // Load history. A cold server (first request after a deploy or idle period) can
+  // take a few seconds to boot and connect to Redis, so allow 8s and retry up to
+  // twice instead of giving up — a single timed-out request used to leave all
+  // APRs stuck on "collecting…" for the whole visit.
   useEffect(() => {
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), HISTORY_TIMEOUT_MS)
+    let cancelled = false
+    let controller: AbortController | null = null
+    let timer: ReturnType<typeof setTimeout> | undefined
 
-    fetch('/api/chart-history', { signal: controller.signal })
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then(({ priceHistory, backingHistory }: { priceHistory?: HistoryPoint[]; backingHistory?: HistoryPoint[] }) => {
-        setPriceEfficiencyHistory((live) => {
-          const merged = mergeHistory(priceHistory ?? [], live)
-          const last = merged[merged.length - 1]
-          lastPriceRef.current = { time: last?.time ?? 0, count: merged.length }
-          return merged
+    const attempt = (n: number) => {
+      controller = new AbortController()
+      timer = setTimeout(() => controller?.abort(), HISTORY_TIMEOUT_MS)
+      fetch('/api/chart-history', { signal: controller.signal, cache: 'no-store' })
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+        .then(({ backingHistory }: { backingHistory?: HistoryPoint[] }) => {
+          if (cancelled) return
+          const list = Array.isArray(backingHistory) ? backingHistory : []
+          // An empty answer can also mean Redis was briefly unreachable — retry once more
+          if (list.length === 0 && n < 2) { setTimeout(() => !cancelled && attempt(n + 1), 3000); return }
+          setBackingRatioHistory(list)
+          setHistoryLoaded(true)
         })
-        setBackingRatioHistory((live) => {
-          const merged = mergeHistory(backingHistory ?? [], live)
-          const last = merged[merged.length - 1]
-          lastBackingRef.current = { time: last?.time ?? 0, count: merged.length }
-          return merged
+        .catch(() => {
+          if (cancelled) return
+          if (n < 2) setTimeout(() => !cancelled && attempt(n + 1), 3000)
+          else setHistoryLoaded(true)
         })
-      })
-      .catch((err) => {
-        if (process.env.NODE_ENV !== 'production') {
-          console.warn('[chart-history] saved history unavailable, using live data only:', err?.message ?? err)
-        }
-      })
-      .finally(() => {
-        clearTimeout(timer)
-        setHistoryLoaded(true)
-      })
+        .finally(() => clearTimeout(timer))
+    }
+    attempt(0)
 
     return () => {
+      cancelled = true
       clearTimeout(timer)
-      controller.abort()
+      controller?.abort()
     }
   }, [])
 
-  const addPriceEfficiencyPoint = useCallback((ratio: number) => {
-    if (ratio <= 0) return
-    const now = Date.now()
-    const { time, count } = lastPriceRef.current
-    const minGap = count < 2 ? WARMUP_INTERVAL_MS : PRICE_INTERVAL_MS
-    if (now - time < minGap) return // also skips the POST, not just the local add
-
-    const point = { time: now, ratio }
-    lastPriceRef.current = { time: now, count: count + 1 }
-    setPriceEfficiencyHistory((prev) => [...prev, point])
-
-    // Fire-and-forget to server
-    fetch('/api/chart-history', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'price03', point }), // 0.3%-pool series (see api/chart-history)
-    }).catch(() => {})
+  // Heartbeat: while the page is open and visible, nudge the server every 10 min.
+  // (The server decides whether a point is due and reads the value on-chain itself.)
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (document.hidden) return
+      fetch('/api/chart-history', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'backing' }),
+      }).catch(() => {})
+    }, POST_INTERVAL_MS)
+    return () => clearInterval(id)
   }, [])
 
   const addBackingRatioPoint = useCallback((ratio: number) => {
-    if (ratio <= 1) return
+    if (!(ratio > 1)) return
     const now = Date.now()
-    const { time, count } = lastBackingRef.current
-    const minGap = count < 2 ? WARMUP_INTERVAL_MS : BACKING_INTERVAL_MS
-    if (now - time < minGap) return
-
-    const point = { time: now, ratio }
-    lastBackingRef.current = { time: now, count: count + 1 }
-    setBackingRatioHistory((prev) => [...prev, point])
-
+    if (now - lastPostRef.current < POST_INTERVAL_MS) return
+    lastPostRef.current = now
     fetch('/api/chart-history', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'backing', point }),
+      body: JSON.stringify({ type: 'backing', point: { time: now, ratio } }),
     }).catch(() => {})
   }, [])
 
-  return {
-    priceEfficiencyHistory,
-    backingRatioHistory,
-    historyLoaded,
-    addPriceEfficiencyPoint,
-    addBackingRatioPoint,
-  }
+  return { backingRatioHistory, historyLoaded, addBackingRatioPoint }
 }

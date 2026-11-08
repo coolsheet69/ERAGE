@@ -101,10 +101,29 @@ function parse(raw: string | null): Point[] {
   try { return JSON.parse(raw) } catch { return [] }
 }
 
+// Append a fresh on-chain point if the last one is 30+ minutes old.
+// Called from GET as well as POST, so the history keeps growing whenever ANYONE
+// loads the site — not only when the backing ratio happens to change.
+async function recordIfDue(redis: Awaited<ReturnType<typeof getClient>>, history: Point[]): Promise<Point[]> {
+  const now = Date.now()
+  const last = history[history.length - 1]
+  if (last && now - last.time < SPACING_MS) return history
+  try {
+    const ratio = await readOnchainRatio()
+    if (!isValidBacking(ratio)) return history
+    const next = [...history, { time: now, ratio }]
+    await redis.set(BACKING_KEY, JSON.stringify(next))
+    return next
+  } catch (err) {
+    console.error('recordIfDue error:', (err as Error)?.message ?? err)
+    return history
+  }
+}
+
 export async function GET() {
   try {
     const redis = await getClient()
-    const backingHistory = compact(parse(await redis.get(BACKING_KEY)))
+    const backingHistory = await recordIfDue(redis, compact(parse(await redis.get(BACKING_KEY))))
     // priceHistory kept (empty) so old cached copies of the site don't break
     return NextResponse.json({ priceHistory: [], backingHistory })
   } catch (err) {
@@ -121,19 +140,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, ignored: true })
     }
     const redis = await getClient()
-    const now = Date.now()
-    const history = compact(parse(await redis.get(BACKING_KEY)))
-    const last = history[history.length - 1]
-    if (last && now - last.time < SPACING_MS) {
-      return NextResponse.json({ ok: true, skipped: 'too_soon' })
-    }
-    // The value comes from the chain, not from the request
-    const ratio = await readOnchainRatio()
-    if (!isValidBacking(ratio)) {
-      return NextResponse.json({ ok: false, error: 'onchain_read_invalid' }, { status: 502 })
-    }
-    history.push({ time: now, ratio })
-    await redis.set(BACKING_KEY, JSON.stringify(history))
+    await recordIfDue(redis, compact(parse(await redis.get(BACKING_KEY))))
     return NextResponse.json({ ok: true })
   } catch (err) {
     console.error('POST chart-history error:', (err as Error)?.message ?? err)

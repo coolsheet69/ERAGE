@@ -1564,7 +1564,7 @@ export default function Dashboard() {
           // Find most recent entry that's at least 6hr old (well-defined growth window)
           const recentEnough = [...backingRatioHistory]
             .reverse()
-            .find((e) => now - e.time >= 6 * HOUR)
+            .find((e) => now - e.time >= 12 * HOUR) // must satisfy the 12h minimum below, or the APR blanks out
           useEntry = recentEnough ?? oldestEntry
         }
       }
