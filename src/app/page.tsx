@@ -1406,8 +1406,14 @@ export default function Dashboard() {
   const { writeContract: writeContractRaw, data: txHash, isPending, error: writeError } = useWriteContract()
   // Every write on this page (mint, zap, redeem, approve, burn, admin) goes through
   // this wrapper, which tags the transaction with the Base builder code.
-  const writeContract = ((variables: Parameters<typeof writeContractRaw>[0]) =>
-    writeContractRaw({ ...variables, dataSuffix: BUILDER_CODE_SUFFIX } as unknown as Parameters<typeof writeContractRaw>[0])) as typeof writeContractRaw
+  // Exception: ERC-20 approve() is sent WITHOUT the suffix. Hardware wallets (Ledger)
+  // clear-sign approve() and require its calldata to be exactly 68 bytes — any extra
+  // bytes make the Ledger Ethereum app reject it with "Invalid data 0x6a80".
+  const writeContract = ((variables: Parameters<typeof writeContractRaw>[0]) => {
+    const fn = (variables as { functionName?: string }).functionName
+    const tagged = fn === 'approve' ? variables : { ...variables, dataSuffix: BUILDER_CODE_SUFFIX }
+    return writeContractRaw(tagged as unknown as Parameters<typeof writeContractRaw>[0])
+  }) as typeof writeContractRaw
   const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({ hash: txHash })
   const queryClient = useQueryClient()
   
